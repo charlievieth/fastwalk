@@ -10,9 +10,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/charlievieth/utils/fastwalk"
+	"github.com/charlievieth/fastwalk"
 )
 
 func formatFileModes(m map[string]os.FileMode) string {
@@ -77,7 +77,7 @@ func symlink(t testing.TB, oldname, newname string) error {
 	return err
 }
 
-func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]string, callback func(path string, typ fastwalk.DirEntry) error, want map[string]os.FileMode) {
+func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]string, callback fs.WalkDirFunc, want map[string]os.FileMode) {
 	tempdir, err := ioutil.TempDir("", "test-fast-walk")
 	if err != nil {
 		t.Fatal(err)
@@ -104,12 +104,14 @@ func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]stri
 	// Create symlinks after all other files. Otherwise, directory symlinks on
 	// Windows are unusable (see https://golang.org/issue/39183).
 	for file, dst := range symlinks {
-		err = symlink(t, dst, file)
+		if err := symlink(t, dst, file); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	got := map[string]os.FileMode{}
 	var mu sync.Mutex
-	err = fastwalk.Walk(conf, tempdir, func(path string, de fastwalk.DirEntry) error {
+	err = fastwalk.Walk(conf, tempdir, func(path string, de fs.DirEntry, err error) error {
 		mu.Lock()
 		defer mu.Unlock()
 		if !strings.HasPrefix(path, tempdir) {
@@ -120,7 +122,7 @@ func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]stri
 			t.Errorf("callback called twice for key %q: %v -> %v", key, old, de.Type())
 		}
 		got[key] = de.Type()
-		return callback(path, de)
+		return callback(path, de, err)
 	})
 
 	if err != nil {
@@ -131,8 +133,16 @@ func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]stri
 	}
 }
 
-func testFastWalk(t *testing.T, files map[string]string, callback func(path string, typ fastwalk.DirEntry) error, want map[string]os.FileMode) {
+func testFastWalk(t *testing.T, files map[string]string, callback fs.WalkDirFunc, want map[string]os.FileMode) {
 	testFastWalkConf(t, nil, files, callback, want)
+}
+
+func requireNoError(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Error("WalkDirFunc called with error:", err)
+		panic(err)
+	}
 }
 
 func TestFastWalk_Basic(t *testing.T) {
@@ -141,7 +151,8 @@ func TestFastWalk_Basic(t *testing.T) {
 		"bar/bar.go":   "two",
 		"skip/skip.go": "skip",
 	},
-		func(path string, typ fastwalk.DirEntry) error {
+		func(path string, typ fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			return nil
 		},
 		map[string]os.FileMode{
@@ -162,7 +173,8 @@ func TestFastWalk_LongFileName(t *testing.T) {
 	testFastWalk(t, map[string]string{
 		longFileName: "one",
 	},
-		func(path string, typ fastwalk.DirEntry) error {
+		func(path string, typ fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			return nil
 		},
 		map[string]os.FileMode{
@@ -180,7 +192,8 @@ func TestFastWalk_Symlink(t *testing.T) {
 		"symdir":           "LINK:foo",
 		"broken/broken.go": "LINK:../nonexistent",
 	},
-		func(path string, typ fastwalk.DirEntry) error {
+		func(path string, typ fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			return nil
 		},
 		map[string]os.FileMode{
@@ -202,7 +215,8 @@ func TestFastWalk_SkipDir(t *testing.T) {
 		"bar/bar.go":   "two",
 		"skip/skip.go": "skip",
 	},
-		func(path string, de fastwalk.DirEntry) error {
+		func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			typ := de.Type().Type()
 			if typ == os.ModeDir && strings.HasSuffix(path, "skip") {
 				return filepath.SkipDir
@@ -237,7 +251,8 @@ func TestFastWalk_SkipFiles(t *testing.T) {
 		"b_skipfiles.go": "b",
 		"zzz/c.go":       "c",
 	},
-		func(path string, _ fastwalk.DirEntry) error {
+		func(path string, _ fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			if strings.HasSuffix(path, "_skipfiles.go") {
 				mu.Lock()
 				defer mu.Unlock()
@@ -259,7 +274,8 @@ func TestFastWalk_TraverseSymlink(t *testing.T) {
 		"skip/skip.go": "skip",
 		"symdir":       "LINK:foo",
 	},
-		func(path string, de fastwalk.DirEntry) error {
+		func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			typ := de.Type().Type()
 			if typ == os.ModeSymlink {
 				return fastwalk.ErrTraverseLink
@@ -291,7 +307,8 @@ func TestFastWalk_TraverseSymlink_Follow(t *testing.T) {
 		"foo/symdir":   "LINK:foo",
 		"bar/symdir":   "LINK:../foo",
 	},
-		func(path string, de fastwalk.DirEntry) error {
+		func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			typ := de.Type().Type()
 			if typ == os.ModeSymlink {
 				t.Errorf("unexpected symlink: %q", path)
@@ -317,7 +334,8 @@ func TestFastWalk_FollowSymlinks(t *testing.T) {
 		"skip/skip.go": "skip",
 		"bar/loop":     "LINK:../bar/",
 	},
-		fastwalk.FollowSymlinks(func(path string, de fastwalk.DirEntry) error {
+		fastwalk.FollowSymlinks(func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
 			return nil
 		}),
 		map[string]os.FileMode{
@@ -351,7 +369,8 @@ func TestFastWalk_SymlinkLoop(t *testing.T) {
 		Follow: true,
 	}
 	var walked int32
-	err = fastwalk.Walk(&conf, tempdir, func(path string, de fastwalk.DirEntry) error {
+	err = fastwalk.Walk(&conf, tempdir, func(path string, de fs.DirEntry, err error) error {
+		requireNoError(t, err)
 		if n := atomic.AddInt32(&walked, 1); n > 20 {
 			return fmt.Errorf("symlink loop: %d", n)
 		}
@@ -378,7 +397,8 @@ func TestFastWalk_Error(t *testing.T) {
 	}
 
 	exp := errors.New("expected")
-	err := fastwalk.Walk(nil, tmp, func(_ string, _ fastwalk.DirEntry) error {
+	err := fastwalk.Walk(nil, tmp, func(_ string, _ fs.DirEntry, err error) error {
+		requireNoError(t, err)
 		return exp
 	})
 	if !errors.Is(err, exp) {
@@ -391,41 +411,12 @@ func TestFastWalk_ErrNotExist(t *testing.T) {
 	if err := os.Remove(tmp); err != nil {
 		t.Fatal(err)
 	}
-	err := fastwalk.Walk(nil, tmp, func(_ string, _ fastwalk.DirEntry) error {
-		return nil
+	err := fastwalk.Walk(nil, tmp, func(_ string, _ fs.DirEntry, err error) error {
+		return err
 	})
 	if !os.IsNotExist(err) {
 		t.Fatalf("os.IsNotExist(%+v) = false want: true", err)
 	}
-}
-
-func diffFileMaps(t testing.TB, got, want map[string]os.FileMode) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Log("cannot diff files:", err)
-	}
-	tempdir, err := os.MkdirTemp(t.TempDir(), "diff-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	gotName := filepath.Join(tempdir, "/got")
-	wantName := filepath.Join(tempdir, "/want")
-	if err := writeFile(gotName, formatFileModes(got), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeFile(wantName, formatFileModes(want), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := exec.Command("git", "diff", "--no-index", "--color=always", "want", "got")
-	cmd.Dir = tempdir
-	out, err := cmd.CombinedOutput()
-	out = bytes.TrimSpace(out)
-	if err != nil && bytes.Contains(out, []byte("error:")) {
-		t.Fatalf("error running command: %q: %v\n### Output\n%s\n####\n",
-			cmd.Args, err, out)
-		return
-	}
-	t.Logf("## Diff:\n%s\n", bytes.TrimSpace(out))
 }
 
 func TestFastWalk_ErrPermission(t *testing.T) {
@@ -464,7 +455,11 @@ func TestFastWalk_ErrPermission(t *testing.T) {
 
 	got := map[string]os.FileMode{}
 	var mu sync.Mutex
-	err := fastwalk.Walk(nil, tempdir, func(path string, de fastwalk.DirEntry) error {
+	err := fastwalk.Walk(nil, tempdir, func(path string, de fs.DirEntry, err error) error {
+		if err != nil && os.IsPermission(err) {
+			return nil
+		}
+
 		mu.Lock()
 		defer mu.Unlock()
 		if !strings.HasPrefix(path, tempdir) {
@@ -482,19 +477,7 @@ func TestFastWalk_ErrPermission(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("walk mismatch.\n got:\n%v\nwant:\n%v", formatFileModes(got), formatFileModes(want))
-		diffFileMaps(t, got, want)
 	}
-
-	// err := fastwalk.Walk(nil, tmp, func(_ string, _ fastwalk.DirEntry) error {
-	// 	return nil
-	// })
-
-	// if _, err := os.Lstat(filename); err == nil {
-	// 	t.Fatal(err)
-	// }
-
-	// TODO: `mkdir bad && chmod 0375 bad && rmdir bad`
-	// t.Skip("TODO: implement test")
 }
 
 var benchDir = flag.String("benchdir", runtime.GOROOT(), "The directory to scan for BenchmarkFastWalk")
@@ -502,7 +485,9 @@ var benchDir = flag.String("benchdir", runtime.GOROOT(), "The directory to scan 
 func benchmarkFastWalk(b *testing.B, conf *fastwalk.Config) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		err := fastwalk.Walk(conf, *benchDir, func(path string, de fastwalk.DirEntry) error { return nil })
+		err := fastwalk.Walk(conf, *benchDir, func(_ string, _ fs.DirEntry, _ error) error {
+			return nil
+		})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -517,4 +502,13 @@ func BenchmarkFastWalkFollow(b *testing.B) {
 	benchmarkFastWalk(b, &fastwalk.Config{
 		Follow: true,
 	})
+}
+
+func BenchmarkFastWalkNumWorkers(b *testing.B) {
+	maxWorkers := runtime.NumCPU() * 2
+	for i := 2; i <= maxWorkers; i += 2 {
+		b.Run(fmt.Sprint(i), func(b *testing.B) {
+		})
+	}
+	benchmarkFastWalk(b, nil)
 }

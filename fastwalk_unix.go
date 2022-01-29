@@ -21,7 +21,7 @@ const blockSize = 8 << 10
 // value used to represent a syscall.DT_UNKNOWN Dirent.Type.
 const unknownFileMode os.FileMode = os.ModeNamedPipe | os.ModeSocket | os.ModeDevice
 
-func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error) error {
+func readDir(dirName string, fn func(dirName, entName string, de os.DirEntry) error) error {
 	fd, err := open(dirName, 0, 0)
 	if err != nil {
 		return &os.PathError{Op: "open", Path: dirName, Err: err}
@@ -52,9 +52,8 @@ func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error
 		// Fallback for filesystems (like old XFS) that don't
 		// support Dirent.Type and have DT_UNKNOWN (0) there
 		// instead.
-		var fi os.FileInfo
 		if typ == unknownFileMode {
-			fi, err = os.Lstat(dirName + "/" + name)
+			fi, err := os.Lstat(dirName + "/" + name)
 			if err != nil {
 				// It got deleted in the meantime.
 				if os.IsNotExist(err) {
@@ -67,7 +66,7 @@ func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error
 		if skipFiles && typ.IsRegular() {
 			continue
 		}
-		de := newDirEntry(dirName, name, typ, fi, nil)
+		de := newUnixDirent(dirName, name, typ)
 		if err := fn(dirName, name, de); err != nil {
 			if err == ErrSkipFiles {
 				skipFiles = true

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build darwin && go1.13
-// +build darwin,go1.13
+//go:build darwin && go1.13 && !appengine
+// +build darwin,go1.13,!appengine
 
 package fastwalk
 
@@ -16,7 +16,7 @@ import (
 //sys	closedir(dir uintptr) (err error)
 //sys	readdir_r(dir uintptr, entry *Dirent, result **Dirent) (res Errno)
 
-func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error) error {
+func readDir(dirName string, fn func(dirName, entName string, de os.DirEntry) error) error {
 	fd, err := opendir(dirName)
 	if err != nil {
 		return &os.PathError{Op: "opendir", Path: dirName, Err: err}
@@ -54,8 +54,8 @@ func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error
 		if string(name) == "." || string(name) == ".." {
 			continue
 		}
-		de := newDirEntry(dirName, string(name), typ, nil, nil)
-		if err := fn(dirName, de.Name(), de); err != nil {
+		nm := string(name)
+		if err := fn(dirName, nm, newUnixDirent(dirName, nm, typ)); err != nil {
 			if err != ErrSkipFiles {
 				return err
 			}

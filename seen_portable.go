@@ -4,6 +4,7 @@
 package fastwalk
 
 import (
+	"io/fs"
 	"path/filepath"
 	"sync"
 )
@@ -15,7 +16,7 @@ type EntryFilter struct {
 	seen map[string]struct{}
 }
 
-func (e *EntryFilter) Entry(path string, _ DirEntry) bool {
+func (e *EntryFilter) Entry(path string, _ fs.DirEntry) bool {
 	name, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return false
@@ -30,4 +31,8 @@ func (e *EntryFilter) Entry(path string, _ DirEntry) bool {
 	}
 	e.mu.Unlock()
 	return ok
+}
+
+func NewEntryFilter() *EntryFilter {
+	return &EntryFilter{seen: make(map[string]struct{}, 128)}
 }

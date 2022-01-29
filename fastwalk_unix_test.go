@@ -35,7 +35,7 @@ func requireGOROOT(t testing.TB) string {
 func BenchmarkReadDir(b *testing.B) {
 	dirname := filepath.Join(requireGOROOT(b), "src")
 	for i := 0; i < b.N; i++ {
-		readDir(dirname, func(dirName, entName string, de DirEntry) error {
+		readDir(dirname, func(dirName, entName string, de os.DirEntry) error {
 			return nil
 		})
 	}

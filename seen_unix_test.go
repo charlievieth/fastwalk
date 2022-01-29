@@ -1,5 +1,6 @@
-//go:build (linux && !appengine) || darwin || freebsd || openbsd || netbsd || !windows
-// +build linux,!appengine darwin freebsd openbsd netbsd !windows
+//go:build (linux || darwin || freebsd || openbsd || netbsd || !windows) && !appengine
+// +build linux darwin freebsd openbsd netbsd !windows
+// +build !appengine
 
 package fastwalk
 
@@ -81,7 +82,7 @@ func TestEntryFilterFiles_Parallel(t *testing.T) {
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		ready.Add(1)
-		go func(pairs []devIno) {
+		go func(i int, pairs []devIno) {
 			defer wg.Done()
 			ready.Done()
 			<-start
@@ -97,7 +98,7 @@ func TestEntryFilterFiles_Parallel(t *testing.T) {
 					return
 				}
 			}
-		}(pairs[i*numWorkers : (i+1)*numWorkers])
+		}(i, pairs[i*numWorkers:(i+1)*numWorkers])
 	}
 
 	ready.Wait()
@@ -148,32 +149,3 @@ func BenchmarkEntryFilter_Seen_Parallel(b *testing.B) {
 		}
 	})
 }
-
-// func BenchmarkMap_Seen(b *testing.B) {
-// 	const N = 8192
-// 	// const N = 1024 * 1024
-// 	rr := rand.New(rand.NewSource(1))
-// 	// pairs := GenerateDevIno(rr, 2, 8192)
-// 	// pairs := GenerateDevIno(rr, 1, 8192)
-// 	pairs := GenerateDevIno(rr, 1, N)
-// 	var mu sync.Mutex
-// 	seen := make(map[DevIno]struct{}, N)
-// 	// seen := make(map[uint64]struct{})
-//
-// 	for _, p := range pairs {
-// 		seen[p] = struct{}{}
-// 	}
-// 	if len(pairs) != N {
-// 		panic("nope!")
-// 	}
-//
-// 	b.ResetTimer()
-// 	for i := 0; i < b.N; i++ {
-// 		p := pairs[i%N]
-// 		if _, ok := seen[p]; !ok {
-// 			mu.Lock()
-// 			b.Fatal("WAT")
-// 			mu.Unlock()
-// 		}
-// 	}
-// }

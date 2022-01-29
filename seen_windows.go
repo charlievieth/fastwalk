@@ -1,9 +1,10 @@
-//go:build windows
-// +build windows
+//go:build windows && !appengine
+// +build windows,!appengine
 
 package fastwalk
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,7 +26,7 @@ func NewEntryFilter() *EntryFilter {
 	return &EntryFilter{seen: make(map[fileKey]struct{}, 128)}
 }
 
-func (e *EntryFilter) Entry(path string, _ DirEntry) bool {
+func (e *EntryFilter) Entry(path string, _ fs.DirEntry) bool {
 	namep, err := syscall.UTF16PtrFromString(fixLongPath(path))
 	if err != nil {
 		return false

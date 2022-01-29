@@ -8,15 +8,15 @@
 package fastwalk
 
 import (
+	"io/fs"
 	"os"
-	"runtime"
 )
 
 // readDir calls fn for each directory entry in dirName.
 // It does not descend into directories or follow symlinks.
 // If fn returns a non-nil error, readDir returns with that error
 // immediately.
-func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error) error {
+func readDir(dirName string, fn func(dirName, entName string, de os.DirEntry) error) error {
 	f, err := os.Open(dirName)
 	if err != nil {
 		return err
@@ -32,13 +32,8 @@ func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error
 		if skipFiles && d.Type().IsRegular() {
 			continue
 		}
-		var fi os.FileInfo
-		if runtime.GOOS == "windows" {
-			// On Windows the result of Lstat is stored in the fs.DirEntry
-			fi, _ = d.Info()
-		}
 		// Need to use FileMode.Type().Type() for fs.DirEntry
-		e := newDirEntry(dirName, d.Name(), d.Type().Type(), fi, nil)
+		e := newDirEntry(dirName, d)
 		if err := fn(dirName, d.Name(), e); err != nil {
 			if err != ErrSkipFiles {
 				return err
@@ -48,4 +43,45 @@ func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error
 	}
 
 	return readErr
+}
+
+type portableDirent struct {
+	fs.DirEntry
+	path string
+	stat os.FileInfo
+}
+
+func (w *portableDirent) Stat() (os.FileInfo, error) {
+	if w.DirEntry.Type()&os.ModeSymlink == 0 {
+		return w.DirEntry.Info()
+	}
+	if w.stat != nil {
+		return w.stat, nil
+	}
+	return os.Stat(w.path)
+}
+
+func lstatDirent(_ string, d fs.DirEntry) (os.FileInfo, error) {
+	return d.Info() // this is no-op on Windows
+}
+
+func statDirent(path string, d fs.DirEntry) (os.FileInfo, error) {
+	if d.Type()&os.ModeSymlink == 0 {
+		return lstatDirent(path, d)
+	}
+	if w, ok := d.(*portableDirent); ok && w != nil {
+		fi, err := w.Stat()
+		if err == nil && w.stat == nil {
+			w.stat = fi
+		}
+		return fi, err
+	}
+	return os.Stat(path)
+}
+
+func newDirEntry(dirName string, info fs.DirEntry) os.DirEntry {
+	return &portableDirent{
+		DirEntry: info,
+		path:     dirName + string(os.PathSeparator) + info.Name(),
+	}
 }
