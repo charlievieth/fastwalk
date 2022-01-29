@@ -480,7 +480,20 @@ func TestFastWalk_ErrPermission(t *testing.T) {
 	}
 }
 
-var benchDir = flag.String("benchdir", runtime.GOROOT(), "The directory to scan for BenchmarkFastWalk")
+var benchDir *string
+
+func init() {
+	ff := flag.Lookup("benchdir")
+	if ff != nil {
+		value := ff.DefValue
+		if ff.Value != nil {
+			value = ff.Value.String()
+		}
+		benchDir = &value
+	} else {
+		benchDir = flag.String("benchdir", runtime.GOROOT(), "The directory to scan for BenchmarkFastWalk")
+	}
+}
 
 func benchmarkFastWalk(b *testing.B, conf *fastwalk.Config) {
 	b.ReportAllocs()
