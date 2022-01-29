@@ -416,6 +416,9 @@ func TestFastWalk_ErrNotExist(t *testing.T) {
 }
 
 func TestFastWalk_ErrPermission(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test not-supported for Windows")
+	}
 	tempdir := t.TempDir()
 	want := map[string]os.FileMode{
 		"":     os.ModeDir,
