@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/karrick/godirwalk"
+
 	"github.com/charlievieth/fastwalk"
 )
 
@@ -507,8 +509,10 @@ func TestFastWalk_ErrPermission(t *testing.T) {
 	}
 }
 
+// Directory to use for benchmarks, GOROOT is used by default
 var benchDir *string
 
+// Make sure we don't register the "benchdir" twice.
 func init() {
 	ff := flag.Lookup("benchdir")
 	if ff != nil {
@@ -551,4 +555,39 @@ func BenchmarkFastWalkNumWorkers(b *testing.B) {
 		})
 	}
 	benchmarkFastWalk(b, nil)
+}
+
+var benchWalkFunc = flag.String("walkfunc", "fastwalk", "The function to use for BenchmarkWalkComparison")
+
+// BenchmarkWalkComparison generates benchmarks using different walk functions
+// so that the results can be easily compared with `benchcmp` and `benchstat`.
+func BenchmarkWalkComparison(b *testing.B) {
+	switch *benchWalkFunc {
+	case "fastwalk":
+		benchmarkFastWalk(b, nil)
+	case "godirwalk":
+		opts := godirwalk.Options{
+			Unsorted: true,
+			Callback: func(_ string, _ *godirwalk.Dirent) error {
+				return nil
+			},
+		}
+		for i := 0; i < b.N; i++ {
+			err := godirwalk.Walk(*benchDir, &opts)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	case "filepath":
+		for i := 0; i < b.N; i++ {
+			err := filepath.WalkDir(*benchDir, func(_ string, _ fs.DirEntry, _ error) error {
+				return nil
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	default:
+		b.Fatalf("invalid walkfunc: %q", *benchWalkFunc)
+	}
 }
