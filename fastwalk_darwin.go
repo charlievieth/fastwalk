@@ -26,7 +26,7 @@ func readDir_Readir(dirName string, fn func(dirName, entName string, de os.DirEn
 	if err != nil {
 		return &os.PathError{Op: "opendir", Path: dirName, Err: err}
 	}
-	defer closedir(fd)
+	defer closedir(fd) //nolint:errcheck
 
 	skipFiles := false
 	var dirent syscall.Dirent
@@ -99,7 +99,7 @@ func readDir_Getdirentries(dirName string, fn func(dirName, entName string, de o
 	var skipFiles bool
 	var basep uintptr
 	for {
-		length, err := Getdirentries(fd, dbuf, &basep)
+		length, err := getdirentries(fd, dbuf, &basep)
 		if err != nil {
 			return &os.PathError{Op: "getdirentries64", Path: dirName, Err: err}
 		}

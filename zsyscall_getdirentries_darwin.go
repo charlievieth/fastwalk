@@ -18,7 +18,7 @@ var _zero uintptr
 
 const useGetdirentries = true
 
-func Getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
+func getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
 	var _p0 unsafe.Pointer
 	if len(buf) > 0 {
 		_p0 = unsafe.Pointer(&buf[0])
@@ -31,7 +31,7 @@ func Getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
 	n = int(r0)
 	if e1 != 0 {
 		err = errnoErr(e1)
-	} else if r0 < 0 {
+	} else if n < 0 {
 		err = errnoErr(syscall.EINVAL)
 	}
 	return
