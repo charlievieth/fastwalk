@@ -117,10 +117,13 @@ type DirEntry interface {
 //
 // If walkFn returns filepath.SkipDir, the directory is skipped.
 //
-// Unlike filepath.Walk:
+// Unlike filepath.WalkDir:
 //   * File stat calls must be done by the user and should be done via
 //     the DirEntry argument to walkFn since it caches the results of
 //     Stat and Lstat.
+//   * The fs.DirEntry argument is always a fastwalk.DirEntry, which has
+//     a Stat() method that returns the result of calling os.Stat() on the
+//     file. The result of Stat() may be cached.
 //   * Multiple goroutines stat the filesystem concurrently. The provided
 //     walkFn must be safe for concurrent use.
 //   * Walk can follow symlinks if walkFn returns the TraverseLink
@@ -175,7 +178,7 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		wg.Add(1)
 		go w.doWork(&wg)
 	}
-	todo := []walkItem{{dir: root, info: fs.FileInfoToDirEntry(fi)}}
+	todo := []walkItem{{dir: root, info: fileInfoToDirEntry(filepath.Dir(root), fi)}}
 	out := 0
 	for {
 		workc := w.workc

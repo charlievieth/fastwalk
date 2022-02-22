@@ -205,6 +205,34 @@ func TestFastWalk_Symlink(t *testing.T) {
 		})
 }
 
+// Test that the fs.DirEntry passed to WalkFunc is always a fastwalk.DirEntry.
+func TestFastWalk_DirEntryType(t *testing.T) {
+	testFastWalk(t, map[string]string{
+		"foo/foo.go":       "one",
+		"bar/bar.go":       "LINK:../foo/foo.go",
+		"symdir":           "LINK:foo",
+		"broken/broken.go": "LINK:../nonexistent",
+	},
+		func(path string, typ fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			if _, ok := typ.(fastwalk.DirEntry); !ok {
+				t.Errorf("%q: not a fastwalk.DirEntry: %T", path, typ)
+			}
+			return nil
+		},
+		map[string]os.FileMode{
+			"":                      os.ModeDir,
+			"/src":                  os.ModeDir,
+			"/src/bar":              os.ModeDir,
+			"/src/bar/bar.go":       os.ModeSymlink,
+			"/src/foo":              os.ModeDir,
+			"/src/foo/foo.go":       0,
+			"/src/symdir":           os.ModeSymlink,
+			"/src/broken":           os.ModeDir,
+			"/src/broken/broken.go": os.ModeSymlink,
+		})
+}
+
 func TestFastWalk_SkipDir(t *testing.T) {
 	testFastWalk(t, map[string]string{
 		"foo/foo.go":   "one",

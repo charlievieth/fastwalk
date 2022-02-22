@@ -5,34 +5,14 @@
 package fastwalk_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/charlievieth/fastwalk"
 )
 
-func formatFileInfo(fi os.FileInfo) string {
-	return fmt.Sprintf("%+v", struct {
-		Name    string
-		Size    int64
-		Mode    os.FileMode
-		ModTime time.Time
-		IsDir   bool
-		Sys     string
-	}{
-		Name:    fi.Name(),
-		Size:    fi.Size(),
-		Mode:    fi.Mode(),
-		ModTime: fi.ModTime(),
-		IsDir:   fi.IsDir(),
-		Sys:     fmt.Sprintf("%+v", fi.Sys()),
-	})
-}
-
-func TestLstatDirent(t *testing.T) {
+func TestDirent(t *testing.T) {
 	tempdir := t.TempDir()
 
 	fileName := filepath.Join(tempdir, "file.txt")
@@ -46,7 +26,7 @@ func TestLstatDirent(t *testing.T) {
 
 	var linkEnt os.DirEntry
 	var fileEnt os.DirEntry
-	fastwalk.Walk(nil, tempdir, func(path string, d os.DirEntry, err error) error {
+	err := fastwalk.Walk(nil, tempdir, func(path string, d os.DirEntry, err error) error {
 		switch path {
 		case linkName:
 			linkEnt = d
@@ -55,6 +35,9 @@ func TestLstatDirent(t *testing.T) {
 		}
 		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if fileEnt == nil || linkEnt == nil {
 		t.Fatal("error walking directory")
 	}
@@ -69,7 +52,8 @@ func TestLstatDirent(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !os.SameFile(want, got) {
-			t.Errorf("lstat mismatch\n got:\n%s\nwant:\n%s", formatFileInfo(got), formatFileInfo(want))
+			t.Errorf("lstat mismatch\n got:\n%s\nwant:\n%s",
+				fastwalk.FormatFileInfo(got), fastwalk.FormatFileInfo(want))
 		}
 	})
 
@@ -83,7 +67,8 @@ func TestLstatDirent(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !os.SameFile(want, got) {
-			t.Errorf("lstat mismatch\n got:\n%s\nwant:\n%s", formatFileInfo(got), formatFileInfo(want))
+			t.Errorf("lstat mismatch\n got:\n%s\nwant:\n%s",
+				fastwalk.FormatFileInfo(got), fastwalk.FormatFileInfo(want))
 		}
 		fi, err := fileEnt.Info()
 		if err != nil {

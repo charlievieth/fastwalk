@@ -81,3 +81,7 @@ func newDirEntry(dirName string, info fs.DirEntry) os.DirEntry {
 		path:     dirName + string(os.PathSeparator) + info.Name(),
 	}
 }
+
+func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
+	return newDirEntry(dirname, fs.FileInfoToDirEntry(fi))
+}

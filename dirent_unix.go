@@ -7,10 +7,15 @@ package fastwalk
 import (
 	"io/fs"
 	"os"
+	"sync"
+	"sync/atomic"
+	"unsafe"
 )
 
 type fileInfo struct {
+	once sync.Once
 	os.FileInfo
+	err error
 }
 
 type unixDirent struct {
@@ -25,21 +30,39 @@ func (d *unixDirent) Name() string      { return d.name }
 func (d *unixDirent) IsDir() bool       { return d.typ.IsDir() }
 func (d *unixDirent) Type() os.FileMode { return d.typ }
 
-func (d *unixDirent) Info() (os.FileInfo, error) {
-	if d.info != nil {
-		return d.info.FileInfo, nil
+func (d *unixDirent) loadFileInfo(pinfo **fileInfo) *fileInfo {
+	ptr := (*unsafe.Pointer)(unsafe.Pointer(pinfo))
+	fi := (*fileInfo)(atomic.LoadPointer(ptr))
+	if fi == nil {
+		fi = &fileInfo{}
+		if !atomic.CompareAndSwapPointer(
+			(*unsafe.Pointer)(unsafe.Pointer(pinfo)), // adrr
+			nil,                                      // old
+			unsafe.Pointer(fi),                       // new
+		) {
+			fi = (*fileInfo)(atomic.LoadPointer(ptr))
+		}
 	}
-	return os.Lstat(d.parent + "/" + d.name)
+	return fi
+}
+
+func (d *unixDirent) Info() (os.FileInfo, error) {
+	info := d.loadFileInfo(&d.info)
+	info.once.Do(func() {
+		info.FileInfo, info.err = os.Lstat(d.parent + "/" + d.name)
+	})
+	return info.FileInfo, info.err
 }
 
 func (d *unixDirent) Stat() (os.FileInfo, error) {
 	if d.typ&os.ModeSymlink == 0 {
 		return d.Info()
 	}
-	if d.stat != nil {
-		return d.stat.FileInfo, nil
-	}
-	return os.Stat(d.parent + "/" + d.name)
+	stat := d.loadFileInfo(&d.stat)
+	stat.once.Do(func() {
+		stat.FileInfo, stat.err = os.Stat(d.parent + "/" + d.name)
+	})
+	return stat.FileInfo, stat.err
 }
 
 func newUnixDirent(parent, name string, typ os.FileMode) *unixDirent {
@@ -50,12 +73,25 @@ func newUnixDirent(parent, name string, typ os.FileMode) *unixDirent {
 	}
 }
 
+func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
+	info := &fileInfo{
+		FileInfo: fi,
+	}
+	info.once.Do(func() {})
+	return &unixDirent{
+		parent: dirname,
+		name:   fi.Name(),
+		typ:    fi.Mode().Type(),
+		info:   info,
+	}
+}
+
 func lstatDirent(path string, de fs.DirEntry) (os.FileInfo, error) {
 	// TODO: check if the path does not match the DirEntry?
 	if d, ok := de.(*unixDirent); ok && d != nil {
 		fi, err := d.Info()
 		if err == nil && d.info == nil {
-			d.info = &fileInfo{fi}
+			d.info = &fileInfo{FileInfo: fi}
 		}
 		return fi, err
 	}
@@ -70,7 +106,7 @@ func statDirent(path string, de fs.DirEntry) (os.FileInfo, error) {
 	if d, ok := de.(*unixDirent); ok && d != nil {
 		fi, err := d.Stat()
 		if err == nil && d.stat == nil {
-			d.stat = &fileInfo{fi}
+			d.stat = &fileInfo{FileInfo: fi}
 		}
 		return fi, err
 	}
