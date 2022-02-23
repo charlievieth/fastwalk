@@ -1,5 +1,5 @@
-//go:build nogetdirentries
-// +build nogetdirentries
+//go:build nogetdirentries && darwin && go1.12
+// +build nogetdirentries,darwin,go1.12
 
 package fastwalk
 
