@@ -47,7 +47,7 @@ func TestDirent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := fastwalk.LstatDirent(linkName, linkEnt)
+		got, err := linkEnt.Info()
 		if err != nil {
 			t.Fatal(err)
 		}

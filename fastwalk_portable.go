@@ -57,18 +57,14 @@ func (w *portableDirent) Stat() (os.FileInfo, error) {
 	return os.Stat(w.path)
 }
 
-func lstatDirent(_ string, d fs.DirEntry) (os.FileInfo, error) {
-	return d.Info() // this is no-op on Windows
-}
-
-func statDirent(path string, d fs.DirEntry) (os.FileInfo, error) {
-	if d.Type()&os.ModeSymlink == 0 {
-		return lstatDirent(path, d)
+func statDirent(path string, de fs.DirEntry) (os.FileInfo, error) {
+	if de.Type()&os.ModeSymlink == 0 {
+		return de.Info()
 	}
-	if w, ok := d.(*portableDirent); ok && w != nil {
-		fi, err := w.Stat()
-		if err == nil && w.stat == nil {
-			w.stat = fi
+	if d, ok := de.(*portableDirent); ok && d != nil {
+		fi, err := d.Stat()
+		if err == nil && d.stat == nil {
+			d.stat = fi
 		}
 		return fi, err
 	}

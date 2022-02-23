@@ -86,29 +86,13 @@ func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
 	}
 }
 
-func lstatDirent(path string, de fs.DirEntry) (os.FileInfo, error) {
-	// TODO: check if the path does not match the DirEntry?
-	if d, ok := de.(*unixDirent); ok && d != nil {
-		fi, err := d.Info()
-		if err == nil && d.info == nil {
-			d.info = &fileInfo{FileInfo: fi}
-		}
-		return fi, err
-	}
-	return de.Info()
-}
-
 func statDirent(path string, de fs.DirEntry) (os.FileInfo, error) {
 	if de.Type()&os.ModeSymlink == 0 {
-		return lstatDirent(path, de)
+		return de.Info()
 	}
 	// TODO: check if the path does not match the DirEntry?
-	if d, ok := de.(*unixDirent); ok && d != nil {
-		fi, err := d.Stat()
-		if err == nil && d.stat == nil {
-			d.stat = &fileInfo{FileInfo: fi}
-		}
-		return fi, err
+	if d, ok := de.(*unixDirent); ok {
+		return d.Stat()
 	}
 	return os.Stat(path)
 }
