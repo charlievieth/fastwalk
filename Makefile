@@ -50,7 +50,7 @@ bench:
 	@go test -run '^$' -bench . -benchmem ./...
 
 .PHONY: bench_comp
-bench_comp: scripts/bench_comp
+bench_comp:
 	@go run ./scripts/bench_comp.go
 
 .PHONY: all
