@@ -15,37 +15,36 @@ type fileKey struct {
 	Ino uint64
 }
 
-// TODO: use multiple maps based with dev/ino hash
-// to reduce lock contention.
-
-// An EntryFilter keeps track of visited directory entries and can be used to
-// detect and avoid symlink loops or processing the same file twice.
-type EntryFilter struct {
-	// we assume most files have not been seen so
-	// no need for a RWMutex
+type entryMap struct {
 	mu   sync.Mutex
 	keys map[fileKey]struct{}
 }
 
+// An EntryFilter keeps track of visited directory entries and can be used to
+// detect and avoid symlink loops or processing the same file twice.
+type EntryFilter struct {
+	// Use an array of 8 to reduce lock contention. The entryMap is
+	// picked via the inode number. We don't take the device number
+	// into account because: we don't expect to see many of them and
+	// uniformly spreading the load isn't terribly beneficial here.
+	ents [8]entryMap
+}
+
 // NewEntryFilter returns a new EntryFilter
 func NewEntryFilter() *EntryFilter {
-	return &EntryFilter{keys: make(map[fileKey]struct{}, 128)}
+	return new(EntryFilter)
 }
 
 func (e *EntryFilter) seen(dev, ino uint64) (seen bool) {
-	key := fileKey{
-		Dev: dev,
-		Ino: ino,
+	m := &e.ents[ino%uint64(len(e.ents))]
+	m.mu.Lock()
+	if _, seen = m.keys[fileKey{dev, ino}]; !seen {
+		if m.keys == nil {
+			m.keys = make(map[fileKey]struct{})
+		}
+		m.keys[fileKey{dev, ino}] = struct{}{}
 	}
-	e.mu.Lock()
-	if e.keys == nil {
-		e.keys = make(map[fileKey]struct{}, 128)
-	}
-	_, seen = e.keys[key]
-	if !seen {
-		e.keys[key] = struct{}{}
-	}
-	e.mu.Unlock()
+	m.mu.Unlock()
 	return seen
 }
 
