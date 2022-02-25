@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -77,8 +78,12 @@ func TestEntryFilter(t *testing.T) {
 	}
 
 	for _, de := range infos {
-		if _, err := de.Info(); err == nil {
-			t.Fatal(de.Name())
+		// On Windows the Info field of the returned DirEntry
+		// is already populated so this will succeed.
+		if runtime.GOOS != "windows" {
+			if _, err := de.Info(); err == nil {
+				t.Fatal(de.Name())
+			}
 		}
 		path := filepath.Join(tempdir, de.Name())
 		if seen := filter.Entry(path, de); !seen {
