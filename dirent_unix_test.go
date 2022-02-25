@@ -131,7 +131,7 @@ func BenchmarkUnixDirentLoadFileInfo(b *testing.B) {
 	d := newUnixDirent(parent, name, fi.Mode().Type())
 
 	for i := 0; i < b.N; i++ {
-		d.loadFileInfo(&d.info)
+		loadFileInfo(&d.info)
 		d.info = nil
 	}
 }

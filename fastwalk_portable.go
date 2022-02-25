@@ -4,7 +4,6 @@
 package fastwalk
 
 import (
-	"io/fs"
 	"os"
 )
 
@@ -39,45 +38,4 @@ func readDir(dirName string, fn func(dirName, entName string, de os.DirEntry) er
 	}
 
 	return readErr
-}
-
-type portableDirent struct {
-	fs.DirEntry
-	path string
-	stat os.FileInfo
-}
-
-func (w *portableDirent) Stat() (os.FileInfo, error) {
-	if w.DirEntry.Type()&os.ModeSymlink == 0 {
-		return w.DirEntry.Info()
-	}
-	if w.stat != nil {
-		return w.stat, nil
-	}
-	return os.Stat(w.path)
-}
-
-func statDirent(path string, de fs.DirEntry) (os.FileInfo, error) {
-	if de.Type()&os.ModeSymlink == 0 {
-		return de.Info()
-	}
-	if d, ok := de.(*portableDirent); ok && d != nil {
-		fi, err := d.Stat()
-		if err == nil && d.stat == nil {
-			d.stat = fi
-		}
-		return fi, err
-	}
-	return os.Stat(path)
-}
-
-func newDirEntry(dirName string, info fs.DirEntry) os.DirEntry {
-	return &portableDirent{
-		DirEntry: info,
-		path:     dirName + string(os.PathSeparator) + info.Name(),
-	}
-}
-
-func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
-	return newDirEntry(dirname, fs.FileInfoToDirEntry(fi))
 }
