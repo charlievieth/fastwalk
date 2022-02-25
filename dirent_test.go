@@ -5,6 +5,7 @@
 package fastwalk_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,8 +28,8 @@ func TestDirent(t *testing.T) {
 	}
 
 	// Use fastwalk.Walk to create the dir entries
-	getDirEnts := func(t *testing.T) (linkEnt, fileEnt os.DirEntry) {
-		err := fastwalk.Walk(nil, tempdir, func(path string, d os.DirEntry, err error) error {
+	getDirEnts := func(t *testing.T) (linkEnt, fileEnt fs.DirEntry) {
+		err := fastwalk.Walk(nil, tempdir, func(path string, d fs.DirEntry, err error) error {
 			switch path {
 			case linkName:
 				linkEnt = d
@@ -94,12 +95,12 @@ func TestDirent(t *testing.T) {
 	})
 
 	t.Run("Parallel", func(t *testing.T) {
-		testParallel := func(t *testing.T, de os.DirEntry, fn func() (os.FileInfo, error)) {
+		testParallel := func(t *testing.T, de fs.DirEntry, fn func() (fs.FileInfo, error)) {
 			numCPU := runtime.NumCPU()
 
-			infos := make([][]os.FileInfo, numCPU)
+			infos := make([][]fs.FileInfo, numCPU)
 			for i := range infos {
-				infos[i] = make([]os.FileInfo, 100)
+				infos[i] = make([]fs.FileInfo, 100)
 			}
 
 			// Start all the goroutines at the same time to
@@ -109,7 +110,7 @@ func TestDirent(t *testing.T) {
 			ready.Add(numCPU)
 			wg.Add(numCPU)
 			for i := 0; i < numCPU; i++ {
-				go func(fis []os.FileInfo, de os.DirEntry) {
+				go func(fis []fs.FileInfo, de fs.DirEntry) {
 					defer wg.Done()
 					ready.Done()
 					<-start
@@ -130,7 +131,7 @@ func TestDirent(t *testing.T) {
 			for _, fis := range infos {
 				for _, fi := range fis {
 					if fi != first {
-						t.Errorf("Expected the same os.FileInfo to always "+
+						t.Errorf("Expected the same fs.FileInfo to always "+
 							"be returned got: %#v want: %#v", fi, first)
 					}
 				}

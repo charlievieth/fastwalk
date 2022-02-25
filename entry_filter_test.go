@@ -14,7 +14,7 @@ import (
 )
 
 func TestEntryFilter(t *testing.T) {
-	dirEntry := func(t *testing.T, name string) os.DirEntry {
+	dirEntry := func(t *testing.T, name string) fs.DirEntry {
 		t.Helper()
 		fi, err := os.Lstat(name)
 		if err != nil {
@@ -117,7 +117,7 @@ func BenchmarkEntryFilter(b *testing.B) {
 
 	type fileInfo struct {
 		Name string
-		Info os.DirEntry
+		Info fs.DirEntry
 	}
 	infos := make([]fileInfo, len(names))
 	for i, name := range names {

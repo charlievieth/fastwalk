@@ -15,7 +15,7 @@ type portableDirent struct {
 }
 
 // TODO: cache the result of Stat
-func (d *portableDirent) Stat() (os.FileInfo, error) {
+func (d *portableDirent) Stat() (fs.FileInfo, error) {
 	if d.DirEntry.Type()&os.ModeSymlink == 0 {
 		return d.DirEntry.Info()
 	}
@@ -26,7 +26,7 @@ func (d *portableDirent) Stat() (os.FileInfo, error) {
 	return stat.FileInfo, stat.err
 }
 
-func newDirEntry(dirName string, info fs.DirEntry) os.DirEntry {
+func newDirEntry(dirName string, info fs.DirEntry) fs.DirEntry {
 	return &portableDirent{
 		DirEntry: info,
 		path:     dirName + string(os.PathSeparator) + info.Name(),

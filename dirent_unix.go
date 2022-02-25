@@ -21,7 +21,7 @@ func (d *unixDirent) Name() string      { return d.name }
 func (d *unixDirent) IsDir() bool       { return d.typ.IsDir() }
 func (d *unixDirent) Type() os.FileMode { return d.typ }
 
-func (d *unixDirent) Info() (os.FileInfo, error) {
+func (d *unixDirent) Info() (fs.FileInfo, error) {
 	info := loadFileInfo(&d.info)
 	info.once.Do(func() {
 		info.FileInfo, info.err = os.Lstat(d.parent + "/" + d.name)
@@ -29,7 +29,7 @@ func (d *unixDirent) Info() (os.FileInfo, error) {
 	return info.FileInfo, info.err
 }
 
-func (d *unixDirent) Stat() (os.FileInfo, error) {
+func (d *unixDirent) Stat() (fs.FileInfo, error) {
 	if d.typ&os.ModeSymlink == 0 {
 		return d.Info()
 	}

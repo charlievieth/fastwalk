@@ -10,7 +10,7 @@ import (
 
 type fileInfo struct {
 	once sync.Once
-	os.FileInfo
+	fs.FileInfo
 	err error
 }
 
@@ -30,7 +30,7 @@ func loadFileInfo(pinfo **fileInfo) *fileInfo {
 	return fi
 }
 
-func statDirent(path string, de fs.DirEntry) (os.FileInfo, error) {
+func statDirent(path string, de fs.DirEntry) (fs.FileInfo, error) {
 	if de.Type()&os.ModeSymlink == 0 {
 		return de.Info()
 	}

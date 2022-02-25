@@ -5,6 +5,7 @@
 package fastwalk
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,10 +15,10 @@ import (
 	"unsafe"
 )
 
-func testUnixDirentParallel(t *testing.T, ent *unixDirent, want os.FileInfo,
-	fn func(*unixDirent) (os.FileInfo, error)) {
+func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
+	fn func(*unixDirent) (fs.FileInfo, error)) {
 
-	sameFile := func(fi1, fi2 os.FileInfo) bool {
+	sameFile := func(fi1, fi2 fs.FileInfo) bool {
 		return fi1.Name() == fi2.Name() &&
 			fi1.Size() == fi2.Size() &&
 			fi1.Mode() == fi2.Mode() &&

@@ -99,7 +99,7 @@ type DirEntry interface {
 	// original directory read or from the time of the call to Stat.
 	// If the entry denotes a symbolic link, Stat reports the information
 	// about the target itself, not the link.
-	Stat() (os.FileInfo, error)
+	Stat() (fs.FileInfo, error)
 }
 
 // Walk is a faster implementation of filepath.Walk.
@@ -259,7 +259,7 @@ func (w *walker) enqueue(it walkItem) {
 	}
 }
 
-func (w *walker) onDirEnt(dirName, baseName string, de os.DirEntry) error {
+func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
 	joined := dirName + string(os.PathSeparator) + baseName
 	typ := de.Type()
 	if typ == os.ModeSymlink && w.filter != nil {

@@ -5,6 +5,7 @@ package fastwalk
 
 import (
 	"flag"
+	"io/fs"
 	"os"
 	"runtime"
 	"sort"
@@ -24,8 +25,8 @@ func TestDarwinReaddir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var rdEnts []os.DirEntry
-	err = readDir_Readir(wd, func(_, _ string, de os.DirEntry) error {
+	var rdEnts []fs.DirEntry
+	err = readDir_Readir(wd, func(_, _ string, de fs.DirEntry) error {
 		rdEnts = append(rdEnts, de)
 		return nil
 	})
@@ -33,8 +34,8 @@ func TestDarwinReaddir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var gdEnts []os.DirEntry
-	err = readDir_Getdirentries(wd, func(_, _ string, de os.DirEntry) error {
+	var gdEnts []fs.DirEntry
+	err = readDir_Getdirentries(wd, func(_, _ string, de fs.DirEntry) error {
 		gdEnts = append(gdEnts, de)
 		return nil
 	})
@@ -49,7 +50,7 @@ func TestDarwinReaddir(t *testing.T) {
 		return gdEnts[i].Name() < gdEnts[j].Name()
 	})
 
-	sameDirEntry := func(d1, d2 os.DirEntry) bool {
+	sameDirEntry := func(d1, d2 fs.DirEntry) bool {
 		if d1.Name() != d2.Name() || d1.IsDir() != d2.IsDir() || d1.Type() != d2.Type() {
 			return false
 		}
@@ -82,7 +83,7 @@ func TestDarwinReaddir(t *testing.T) {
 
 var benchDir = flag.String("benchdir", runtime.GOROOT(), "The directory to scan for BenchmarkFastWalk")
 
-func noopReadDirFunc(_, _ string, _ os.DirEntry) error {
+func noopReadDirFunc(_, _ string, _ fs.DirEntry) error {
 	return nil
 }
 

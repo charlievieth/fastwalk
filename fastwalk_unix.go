@@ -10,6 +10,7 @@ package fastwalk
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"syscall"
 	"unsafe"
@@ -21,7 +22,7 @@ const blockSize = 8 << 10
 // value used to represent a syscall.DT_UNKNOWN Dirent.Type.
 const unknownFileMode os.FileMode = os.ModeNamedPipe | os.ModeSocket | os.ModeDevice
 
-func readDir(dirName string, fn func(dirName, entName string, de os.DirEntry) error) error {
+func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
 	fd, err := open(dirName, 0, 0)
 	if err != nil {
 		return &os.PathError{Op: "open", Path: dirName, Err: err}

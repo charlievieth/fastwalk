@@ -4,6 +4,7 @@
 package fastwalk
 
 import (
+	"io/fs"
 	"os"
 )
 
@@ -11,7 +12,7 @@ import (
 // It does not descend into directories or follow symlinks.
 // If fn returns a non-nil error, readDir returns with that error
 // immediately.
-func readDir(dirName string, fn func(dirName, entName string, de os.DirEntry) error) error {
+func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
 	f, err := os.Open(dirName)
 	if err != nil {
 		return err
