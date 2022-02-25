@@ -40,6 +40,9 @@ test_build: test_build_darwin_arm64 test_build_darwin_amd64 \
 .PHONY: test
 test: # runs all tests against the package with race detection and coverage percentage
 	@go test -race -cover ./...
+ifeq "$(shell go env GOOS)" "darwin"
+	@go test -tags nogetdirentries -race -cover ./...
+endif
 
 .PHONY: quick
 quick: # runs all tests without coverage or the race detector
