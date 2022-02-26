@@ -27,3 +27,7 @@ func direntNamlen(dirent *syscall.Dirent) uint64 {
 	}
 	panic("failed to find terminating 0 byte in dirent")
 }
+
+func direntInode(dirent *syscall.Dirent) uint64 {
+	return uint64(dirent.Ino)
+}

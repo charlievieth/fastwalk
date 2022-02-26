@@ -12,3 +12,7 @@ import "syscall"
 func direntNamlen(dirent *syscall.Dirent) uint64 {
 	return uint64(dirent.Namlen)
 }
+
+func direntInode(dirent *syscall.Dirent) uint64 {
+	return uint64(dirent.Fileno)
+}
