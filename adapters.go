@@ -9,7 +9,7 @@ import (
 func isDir(path string, d fs.DirEntry) bool {
 	typ := d.Type()
 	if typ&os.ModeSymlink != 0 {
-		if fi, err := statDirent(path, d); err == nil {
+		if fi, err := StatDirEntry(path, d); err == nil {
 			typ = fi.Mode().Type()
 		}
 	}

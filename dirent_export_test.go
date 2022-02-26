@@ -10,10 +10,6 @@ import (
 // Export funcs for testing (because I'm too lazy to move the
 // symlink() and writeFile() funcs)
 
-func StatDirent(path string, d fs.DirEntry) (fs.FileInfo, error) {
-	return statDirent(path, d)
-}
-
 func FormatFileInfo(fi fs.FileInfo) string {
 	return fmt.Sprintf("%+v", struct {
 		Name    string

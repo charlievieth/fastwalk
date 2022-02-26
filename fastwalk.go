@@ -265,7 +265,7 @@ func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
 	if typ == os.ModeSymlink && w.filter != nil {
 		// Check if the symlink points to a directory before potentially
 		// enqueuing it.
-		if fi, _ := statDirent(joined, de); fi != nil && fi.IsDir() {
+		if fi, _ := StatDirEntry(joined, de); fi != nil && fi.IsDir() {
 			if !w.filter.Entry(joined, de) {
 				w.enqueue(walkItem{dir: joined, info: de})
 			}

@@ -69,7 +69,7 @@ func TestDirent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := fastwalk.StatDirent(linkName, fileEnt)
+		got, err := fastwalk.StatDirEntry(linkName, fileEnt)
 		if err != nil {
 			t.Fatal(err)
 		}

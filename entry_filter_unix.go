@@ -50,7 +50,7 @@ func (e *EntryFilter) seen(dev, ino uint64) (seen bool) {
 
 // Entry returns if path and fs.DirEntry have been seen before.
 func (e *EntryFilter) Entry(path string, de fs.DirEntry) (seen bool) {
-	fi, err := statDirent(path, de)
+	fi, err := StatDirEntry(path, de)
 	if err != nil {
 		return true // treat errors as duplicate files
 	}
