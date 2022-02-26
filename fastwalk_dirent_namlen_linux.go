@@ -8,7 +8,6 @@
 package fastwalk
 
 import (
-	"bytes"
 	"syscall"
 	"unsafe"
 )
@@ -21,9 +20,10 @@ func direntNamlen(dirent *syscall.Dirent) uint64 {
 	if limit > nameBufLen {
 		limit = nameBufLen
 	}
-	nameLen := bytes.IndexByte(nameBuf[:limit], 0)
-	if nameLen < 0 {
-		panic("failed to find terminating 0 byte in dirent")
+	for i := uint64(0); i < uint64(limit); i++ {
+		if nameBuf[i] == 0 {
+			return i
+		}
 	}
-	return uint64(nameLen)
+	panic("failed to find terminating 0 byte in dirent")
 }
