@@ -23,8 +23,8 @@ func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
 			fi1.Size() == fi2.Size() &&
 			fi1.Mode() == fi2.Mode() &&
 			fi1.ModTime() == fi2.ModTime() &&
-			fi1.IsDir() == fi2.IsDir()
-		// os.SameFile(fi1, fi2)
+			fi1.IsDir() == fi2.IsDir() &&
+			os.SameFile(fi1, fi2)
 	}
 
 	numCPU := runtime.NumCPU()
