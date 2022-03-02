@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,80 +15,64 @@ import (
 )
 
 func TestEntryFilter(t *testing.T) {
-	dirEntry := func(t *testing.T, name string) fs.DirEntry {
-		t.Helper()
-		fi, err := os.Lstat(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return fs.FileInfoToDirEntry(fi)
-	}
-
 	tempdir := t.TempDir()
+	files := map[string]string{
+		"foo/foo.go": "one",
+		"bar/bar.go": "LINK:../foo/foo.go",
+		"bar/baz.go": "two",
+		"bar/loop":   "LINK:../bar/", // symlink loop
+		"file.go":    "three",
 
-	fileName := filepath.Join(tempdir, "file.txt")
-	if err := writeFile(fileName, "file.txt", 0644); err != nil {
-		t.Fatal(err)
+		// Use multiple symdirs to increase the chance that one
+		// of these and not "foo" is followed first.
+		"symdir1": "LINK:foo",
+		"symdir2": "LINK:foo",
+		"symdir3": "LINK:foo",
+		"symdir4": "LINK:foo",
 	}
+	testCreateFiles(t, tempdir, files)
 
-	linkDir := filepath.Join(tempdir, "dir")
-	if err := os.Mkdir(linkDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	linkName := filepath.Join(linkDir, "link.link")
-	if err := symlink(t, "../"+filepath.Base(fileName), linkName); err != nil {
-		t.Fatal(err)
-	}
-
-	// Sanity check
-	{
-		fi1, err := os.Stat(fileName)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fi2, err := os.Stat(linkName)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !os.SameFile(fi1, fi2) {
-			t.Fatalf("os.SameFile(%q, %q) == false", fileName, linkName)
-		}
-	}
-
+	var mu sync.Mutex
+	var seen []os.FileInfo
 	filter := fastwalk.NewEntryFilter()
-	if seen := filter.Entry(fileName, dirEntry(t, fileName)); seen {
-		t.Errorf("filter.Entry(%q) = %t want: %t",
-			filepath.Dir(fileName), seen, false)
-	}
-	if seen := filter.Entry(linkName, dirEntry(t, linkName)); !seen {
-		t.Errorf("filter.Entry(%q) = %t want: %t",
-			filepath.Dir(linkName), seen, true)
-	}
-
-	// Entry should return true (aka seen) if there is an error
-	// stat'ing the file.
-
-	infos, err := os.ReadDir(tempdir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Remove the files
-	if err := os.RemoveAll(tempdir); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, de := range infos {
-		// On Windows the Info field of the returned DirEntry
-		// is already populated so this will succeed.
-		if runtime.GOOS != "windows" {
-			if _, err := de.Info(); err == nil {
-				t.Fatal(de.Name())
+	walkFn := fastwalk.IgnoreDuplicateFiles(func(path string, de fs.DirEntry, err error) error {
+		requireNoError(t, err)
+		fi1, err := fastwalk.StatDirEntry(path, de)
+		if err != nil {
+			t.Error(err)
+			return err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if !filter.Entry(path, de) {
+			for _, fi2 := range seen {
+				if os.SameFile(fi1, fi2) {
+					t.Errorf("Visited file twice: %q (%s) and %q (%s)",
+						path, fi1.Mode(), fi2.Name(), fi2.Mode())
+				}
 			}
 		}
-		path := filepath.Join(tempdir, de.Name())
-		if seen := filter.Entry(path, de); !seen {
-			t.Errorf("filter.Entry(%q) = %t want: %t", de.Name(), seen, true)
+		seen = append(seen, fi1)
+		return nil
+	})
+	if err := fastwalk.Walk(nil, tempdir, walkFn); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test that true is returned for a non-existent directory
+	// On Windows the Info field of the returned DirEntry
+	// is already populated so this will succeed.
+	if runtime.GOOS != "windows" {
+		path := filepath.Join(tempdir, "src", "foo/foo.go")
+		fi, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if !filter.Entry(path, fs.FileInfoToDirEntry(fi)) {
+			t.Error("EntryFilter should return true when the file does not exist")
 		}
 	}
 }

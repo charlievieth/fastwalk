@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -49,6 +50,9 @@ func TestIgnoreDuplicateFiles(t *testing.T) {
 		"symdir2": "LINK:foo",
 		"symdir3": "LINK:foo",
 		"symdir4": "LINK:foo",
+	}
+	if runtime.GOOS == "windows" {
+		delete(files, "broken/broken.go")
 	}
 	testCreateFiles(t, tempdir, files)
 
