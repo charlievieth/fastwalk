@@ -10,14 +10,114 @@
 Fast parallel directory traversal for Golang.
 
 Package fastwalk provides a fast parallel version of [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc)
-that is roughly \~4x faster on Linux and \~1.5x faster on macOS,
-allocates 50% less memory, and requires 25% fewer memory allocations.
+that is \~4x faster on Linux, \~1.5x faster on macOS, allocates 50% less memory,
+and requires 25% fewer memory allocations.
+
+<!-- TODO: mention EntryFilter -->
 
 ## Usage
 
-Usage is the same as [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc)
-only the [`filepath.WalkFunc`](https://pkg.go.dev/path/filepath@go1.17.7#WalkFunc)
-needs to be safe for concurrent use.
+Usage is the same as [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc),
+but the [`walkFn`](https://pkg.go.dev/path/filepath@go1.17.7#WalkFunc)
+argument to [`fastwalk.Walk`](https://pkg.go.dev/github.com/charlievieth/fastwalk#Walk)
+must be safe for concurrent use.
+
+<!-- TODO: this example is large move it to an examples folder -->
+
+The below example recursively walks a directory following symbolic links and
+prints the number of lines found in each file (or symbolic link that references
+a file) to stdout:
+```go
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+
+	"github.com/charlievieth/fastwalk"
+)
+
+var newLine = []byte{'\n'}
+
+// countLinesInFile returns the number of newlines ('\n') in file name.
+func countLinesInFile(name string) (int64, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	buf := make([]byte, 96*1024)
+	var lines int64
+	for {
+		n, e := f.Read(buf)
+		if n > 0 {
+			lines += int64(bytes.Count(buf[:n], newLine))
+		}
+		if e != nil {
+			if e != io.EOF {
+				err = e
+			}
+			break
+		}
+	}
+	return lines, err
+}
+
+// LineCount recursively walks directory root printing the number of lines in
+// file encountered.
+func LineCount(root string) error {
+	countLinesWalkFn := func(path string, d fs.DirEntry, err error) error {
+		// We wrap this with fastwalk.IgnorePermissionErrors so we know the
+		// error is not a permission error (common when walking outside a users
+		// home directory) and is likely something worse so we should return it
+		// and abort the walk.
+		//
+		// A common error here is "too many open files", which can occur if the
+		// walkFn opens, but does not close, files.
+		if err != nil {
+			return err
+		}
+
+		// If the entry is a symbolic link get the type of file that
+		// it references.
+		typ := d.Type()
+		if typ&fs.ModeSymlink != 0 {
+			if fi, err := fastwalk.StatDirEntry(path, d); err == nil {
+				typ = fi.Mode().Type()
+			}
+		}
+
+		if typ.IsRegular() {
+			lines, err := countLinesInFile(path)
+			if err == nil {
+				fmt.Printf("%8d %s\n", lines, path)
+			} else {
+				// Print but do not return the error.
+				fmt.Fprintf(os.Stderr, "%s: %s\n", path, err)
+			}
+		}
+		return nil
+	}
+
+	// Ignore permission errors traversing directories.
+	//
+	// Note: this only ignores permission errors when traversing directories.
+	// Permission errors may still be encountered when accessing files.
+	walkFn := fastwalk.IgnorePermissionErrors(countLinesWalkFn)
+
+	// Safely follow symbolic links. This can also be achieved by setting
+	// fastwalk.Config.Follow to true.
+	walkFn = fastwalk.FollowSymlinks(walkFn)
+
+	// If Walk is called with a nil Config the DefaultConfig is used.
+	if err := fastwalk.Walk(nil, root, walkFn); err != nil {
+                return fmt.Errorf("walking directory %s: %v", root, err)
+	}
+        return nil
+}
+```
 
 ## Benchmarks
 
