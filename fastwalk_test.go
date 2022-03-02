@@ -75,13 +75,19 @@ func symlink(t testing.TB, oldname, newname string) error {
 	return err
 }
 
-func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]string, callback fs.WalkDirFunc, want map[string]os.FileMode) {
-	tempdir, err := ioutil.TempDir("", "test-fast-walk")
-	if err != nil {
-		t.Fatal(err)
+func cleanupOrLogTempDir(t *testing.T, tempdir string) {
+	if e := recover(); e != nil {
+		t.Log("TMPDIR:", tempdir)
+		t.Fatal(e)
 	}
-	defer os.RemoveAll(tempdir)
+	if t.Failed() {
+		t.Log("TMPDIR:", tempdir)
+	} else {
+		os.RemoveAll(tempdir)
+	}
+}
 
+func testCreateFiles(t *testing.T, tempdir string, files map[string]string) {
 	symlinks := map[string]string{}
 	for path, contents := range files {
 		file := filepath.Join(tempdir, "/src", path)
@@ -106,10 +112,24 @@ func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]stri
 			t.Fatal(err)
 		}
 	}
+}
+
+func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]string, callback fs.WalkDirFunc, want map[string]os.FileMode) {
+	tempdir, err := ioutil.TempDir("", "test-fast-walk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupOrLogTempDir(t, tempdir)
+
+	testCreateFiles(t, tempdir, files)
 
 	got := map[string]os.FileMode{}
 	var mu sync.Mutex
 	err = fastwalk.Walk(conf, tempdir, func(path string, de fs.DirEntry, err error) error {
+		if de == nil {
+			t.Errorf("nil fs.DirEntry on %q", path)
+			return nil
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		if !strings.HasPrefix(path, tempdir) {
@@ -128,6 +148,7 @@ func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]stri
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("walk mismatch.\n got:\n%v\nwant:\n%v", formatFileModes(got), formatFileModes(want))
+		diffFileModes(t, got, want)
 	}
 }
 
@@ -295,10 +316,9 @@ func TestFastWalk_SkipFiles(t *testing.T) {
 
 func TestFastWalk_TraverseSymlink(t *testing.T) {
 	testFastWalk(t, map[string]string{
-		"foo/foo.go":   "one",
-		"bar/bar.go":   "two",
-		"skip/skip.go": "skip",
-		"symdir":       "LINK:foo",
+		"foo/foo.go": "one",
+		"bar/bar.go": "two",
+		"symdir":     "LINK:foo",
 	},
 		func(path string, de fs.DirEntry, err error) error {
 			requireNoError(t, err)
@@ -315,65 +335,360 @@ func TestFastWalk_TraverseSymlink(t *testing.T) {
 			"/src/bar/bar.go":    0,
 			"/src/foo":           os.ModeDir,
 			"/src/foo/foo.go":    0,
-			"/src/skip":          os.ModeDir,
-			"/src/skip/skip.go":  0,
 			"/src/symdir":        os.ModeSymlink,
 			"/src/symdir/foo.go": 0,
 		})
 }
 
-func TestFastWalk_TraverseSymlink_Follow(t *testing.T) {
-	conf := fastwalk.Config{
-		Follow: true,
-	}
-	testFastWalkConf(t, &conf, map[string]string{
-		"foo/foo.go":   "one",
-		"bar/bar.go":   "two",
-		"skip/skip.go": "skip",
-		"foo/symdir":   "LINK:foo",
-		"bar/symdir":   "LINK:../foo",
+func TestFastWalk_DirEntry_Type(t *testing.T) {
+	testFastWalk(t, map[string]string{
+		"foo/foo.go": "one",
+		"bar/bar.go": "two",
+		"symdir":     "LINK:foo",
 	},
 		func(path string, de fs.DirEntry, err error) error {
 			requireNoError(t, err)
-			typ := de.Type().Type()
-			if typ == os.ModeSymlink {
-				t.Errorf("unexpected symlink: %q", path)
+			if de.Type() != de.Type().Type() {
+				t.Errorf("%s: type mismatch got: %q want: %q",
+					path, de.Type(), de.Type().Type())
+			}
+			if de.Type() == os.ModeSymlink {
+				return fastwalk.ErrTraverseLink
 			}
 			return nil
 		},
 		map[string]os.FileMode{
-			"":                  os.ModeDir,
-			"/src":              os.ModeDir,
-			"/src/bar":          os.ModeDir,
-			"/src/bar/bar.go":   0,
-			"/src/foo":          os.ModeDir,
-			"/src/foo/foo.go":   0,
-			"/src/skip":         os.ModeDir,
-			"/src/skip/skip.go": 0,
+			"":                   os.ModeDir,
+			"/src":               os.ModeDir,
+			"/src/bar":           os.ModeDir,
+			"/src/bar/bar.go":    0,
+			"/src/foo":           os.ModeDir,
+			"/src/foo/foo.go":    0,
+			"/src/symdir":        os.ModeSymlink,
+			"/src/symdir/foo.go": 0,
 		})
 }
 
-func TestFastWalk_FollowSymlinks(t *testing.T) {
-	testFastWalk(t, map[string]string{
-		"foo/foo.go":   "one",
-		"bar/bar.go":   "two",
-		"skip/skip.go": "skip",
-		"bar/loop":     "LINK:../bar/",
+// WARN: remove if not used
+func requireNoLinks(t *testing.T, path string, de fs.DirEntry) {
+	t.Helper()
+	if de.Type()&os.ModeSymlink != 0 {
+		fi, err := fastwalk.StatDirEntry(path, de)
+		if err != nil {
+			// t.Error(err)
+			t.Logf("os.Stat(%q) = %v:", path, err)
+			return
+		}
+		if !fi.IsDir() {
+			return
+		}
+		var short string
+		a := strings.Split(path, string(filepath.Separator))
+		for i := len(a) - 1; i >= 0; i-- {
+			if a[i] == "src" {
+				short = filepath.Join(a[i+1:]...)
+				break
+			}
+		}
+		t.Errorf("unexpected symlink: %q", short)
+		return
+	}
+	if fi, _ := de.Info(); fi != nil {
+		if fi.Mode()&os.ModeSymlink == 0 {
+			// This should never happen
+			t.Errorf("mismatch between: DirEntry.Type (%s) "+
+				"and DirEntry.Info.Mode (%s)",
+				de.Type(), fi.Mode())
+		}
+	}
+}
+
+// TODO: rename
+//
+// Test that ErrTraverseLink is ignored when following symlinks
+// if it would cause a symlink loop.
+func TestFastWalk_TraverseSymlink_Follow_ErrTraverseLink(t *testing.T) {
+	conf := fastwalk.Config{
+		Follow: true,
+	}
+	testFastWalkConf(t, &conf, map[string]string{
+		"foo/foo.go": "one",
+		"bar/bar.go": "two",
+		"bar/symdir": "LINK:../foo/",
+		"bar/loop":   "LINK:../bar/", // symlink loop
 	},
-		fastwalk.FollowSymlinks(func(path string, de fs.DirEntry, err error) error {
+		func(path string, de fs.DirEntry, err error) error {
 			requireNoError(t, err)
+			if err != nil {
+				return err
+			}
+			if de.Type()&os.ModeSymlink != 0 {
+				if fi, err := fastwalk.StatDirEntry(path, de); err == nil && fi.IsDir() {
+					return fastwalk.ErrTraverseLink
+				}
+			}
+			return nil
+		},
+		map[string]os.FileMode{
+			"":                       os.ModeDir,
+			"/src":                   os.ModeDir,
+			"/src/bar":               os.ModeDir,
+			"/src/bar/bar.go":        0,
+			"/src/bar/loop":          os.ModeSymlink,
+			"/src/bar/symdir":        os.ModeSymlink,
+			"/src/bar/symdir/foo.go": 0,
+			"/src/foo":               os.ModeDir,
+			"/src/foo/foo.go":        0,
+		})
+}
+
+func TestFastWalk_TraverseSymlink_Follow(t *testing.T) {
+	subTests := []struct {
+		Name   string
+		OnLink func(path string, d fs.DirEntry) error
+	}{
+		// Test that the walk func does *not* need to return
+		// ErrTraverseLink for links to be followed.
+		{
+			Name:   "Default",
+			OnLink: func(path string, d fs.DirEntry) error { return nil },
+		},
+
+		// Test that returning ErrTraverseLink does not interfere
+		// with the Follow logic.
+		{
+			Name: "ErrTraverseLink",
+			OnLink: func(path string, d fs.DirEntry) error {
+				if d.Type()&os.ModeSymlink != 0 {
+					if fi, err := fastwalk.StatDirEntry(path, d); err == nil && fi.IsDir() {
+						return fastwalk.ErrTraverseLink
+					}
+				}
+				return nil
+			},
+		},
+	}
+	for _, x := range subTests {
+		t.Run(x.Name, func(t *testing.T) {
+			conf := fastwalk.Config{
+				Follow: true,
+			}
+			testFastWalkConf(t, &conf, map[string]string{
+				"foo/foo.go":  "one",
+				"bar/bar.go":  "two",
+				"foo/symlink": "LINK:foo.go",
+				"bar/symdir":  "LINK:../foo/",
+				"bar/link1":   "LINK:../foo/",
+			},
+				func(path string, de fs.DirEntry, err error) error {
+					requireNoError(t, err)
+					if err != nil {
+						return err
+					}
+					if de.Type()&os.ModeSymlink != 0 {
+						return x.OnLink(path, de)
+					}
+					return nil
+				},
+				map[string]os.FileMode{
+					"":                        os.ModeDir,
+					"/src":                    os.ModeDir,
+					"/src/bar":                os.ModeDir,
+					"/src/bar/bar.go":         0,
+					"/src/bar/link1":          os.ModeSymlink,
+					"/src/bar/link1/foo.go":   0,
+					"/src/bar/link1/symlink":  os.ModeSymlink,
+					"/src/bar/symdir":         os.ModeSymlink,
+					"/src/bar/symdir/foo.go":  0,
+					"/src/bar/symdir/symlink": os.ModeSymlink,
+					"/src/foo":                os.ModeDir,
+					"/src/foo/foo.go":         0,
+					"/src/foo/symlink":        os.ModeSymlink,
+				})
+		})
+	}
+}
+
+func TestFastWalk_TraverseSymlink_Follow_SkipDot(t *testing.T) {
+	conf := fastwalk.Config{
+		Follow: true,
+	}
+	testFastWalkConf(t, &conf, map[string]string{
+		".dot/baz.go": "one",
+		"bar/bar.go":  "three",
+		"bar/dot":     "LINK:../.dot/",
+		"bar/symdir":  "LINK:../foo/",
+		"foo/foo.go":  "two",
+		"foo/symlink": "LINK:foo.go",
+	},
+		func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			if err != nil {
+				return err
+			}
+			if strings.HasPrefix(de.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		},
+		map[string]os.FileMode{
+			"":                        os.ModeDir,
+			"/src":                    os.ModeDir,
+			"/src/.dot":               os.ModeDir,
+			"/src/bar":                os.ModeDir,
+			"/src/bar/bar.go":         0,
+			"/src/bar/dot":            os.ModeSymlink,
+			"/src/bar/dot/baz.go":     0,
+			"/src/bar/symdir":         os.ModeSymlink,
+			"/src/bar/symdir/foo.go":  0,
+			"/src/bar/symdir/symlink": os.ModeSymlink,
+			"/src/foo":                os.ModeDir,
+			"/src/foo/foo.go":         0,
+			"/src/foo/symlink":        os.ModeSymlink,
+		})
+}
+
+// Test IgnoreDuplicateDirs adapter
+func TestIgnoreDuplicateDirs(t *testing.T) {
+	testFastWalk(t, map[string]string{
+		"foo/foo.go":  "one",
+		"bar/bar.go":  "two",
+		"foo/symlink": "LINK:foo.go",
+		"bar/symdir":  "LINK:../foo/",
+		"bar/link1":   "LINK:../foo/",
+	},
+		fastwalk.IgnoreDuplicateDirs(func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			// requireNoLinks(t, path, de)
+			// path = filepath.ToSlash(path)
+			// for _, suffix := range []string{"/src/bar/link1", "/src/bar/symdir"} {
+			// 	if strings.HasSuffix(path, suffix) {
+			// 		t.Errorf("Should have skipped link: %q", suffix)
+			// 	}
+			// }
 			return nil
 		}),
 		map[string]os.FileMode{
-			"":                  os.ModeDir,
-			"/src":              os.ModeDir,
-			"/src/bar":          os.ModeDir,
-			"/src/bar/loop":     os.ModeSymlink,
-			"/src/bar/bar.go":   0,
-			"/src/foo":          os.ModeDir,
-			"/src/foo/foo.go":   0,
-			"/src/skip":         os.ModeDir,
-			"/src/skip/skip.go": 0,
+			"":                 os.ModeDir,
+			"/src":             os.ModeDir,
+			"/src/bar":         os.ModeDir,
+			"/src/bar/bar.go":  0,
+			"/src/foo":         os.ModeDir,
+			"/src/foo/foo.go":  0,
+			"/src/foo/symlink": os.ModeSymlink,
+
+			// NOTE: the walkFn is not actually called for these files and
+			// we assert that in the callback, but we need these here for
+			// the test to pass with the current testFastWalk harness.
+			"/src/bar/link1":  os.ModeSymlink,
+			"/src/bar/symdir": os.ModeSymlink,
+		})
+}
+
+func TestIgnoreDuplicateDirs_SkipDot_XXX(t *testing.T) {
+	conf := fastwalk.Config{
+		Follow: true,
+	}
+	testFastWalkConf(t, &conf, map[string]string{
+		"foo/foo.go": "one",
+		"bar/bar.go": "two",
+		".dot":       "LINK:foo",
+		// "symdir":      "LINK:.dot",
+		// "foo/symlink": "LINK:foo.go",
+		// "bar/symdir":  "LINK:../foo/",
+		// "bar/dot":     "LINK:../.dot/",
+	},
+		func(path string, de fs.DirEntry, err error) error {
+			fn := func(path string, de fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				requireNoError(t, err)
+				// requireNoLinks(t, path, de)
+
+				for _, suffix := range []string{"/src/bar/dot", "/src/bar/symdir"} {
+					if strings.HasSuffix(filepath.ToSlash(path), suffix) {
+						t.Errorf("Should have skipped link: %q", suffix)
+						return nil
+					}
+				}
+
+				if strings.HasPrefix(de.Name(), ".") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			e := fn(path, de, err)
+			t.Logf("%s: %v\n", path, e)
+			return e
+		},
+		map[string]os.FileMode{
+			"":                os.ModeDir,
+			"/src":            os.ModeDir,
+			"/src/.dot":       os.ModeSymlink,
+			"/src/bar":        os.ModeDir,
+			"/src/bar/bar.go": 0,
+			"/src/foo":        os.ModeDir,
+			"/src/foo/foo.go": 0,
+			// "/src/foo/symlink": os.ModeSymlink,
+
+			// NOTE: the walkFn is not actually called for these files and
+			// we assert that in the callback, but we need these here for
+			// the test to pass with the current testFastWalk harness.
+			// "/src/bar/dot": os.ModeSymlink,
+			// "/src/bar/symdir": os.ModeSymlink,
+		})
+}
+
+func TestIgnoreDuplicateDirs_SkipDot(t *testing.T) {
+	testFastWalk(t, map[string]string{
+		"foo/foo.go": "one",
+		"bar/bar.go": "two",
+		".dot":       "LINK:foo",
+		// "symdir":      "LINK:.dot",
+		// "foo/symlink": "LINK:foo.go",
+		// "bar/symdir":  "LINK:../foo/",
+		// "bar/dot":     "LINK:../.dot/",
+	},
+		fastwalk.IgnoreDuplicateDirs(func(path string, de fs.DirEntry, err error) error {
+			fn := func(path string, de fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				requireNoError(t, err)
+				// requireNoLinks(t, path, de)
+
+				for _, suffix := range []string{"/src/bar/dot", "/src/bar/symdir"} {
+					if strings.HasSuffix(filepath.ToSlash(path), suffix) {
+						t.Errorf("Should have skipped link: %q", suffix)
+						return nil
+					}
+				}
+
+				if strings.HasPrefix(de.Name(), ".") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			e := fn(path, de, err)
+			t.Logf("%s: %v\n", path, e)
+			return e
+		}),
+		map[string]os.FileMode{
+			"":                os.ModeDir,
+			"/src":            os.ModeDir,
+			"/src/.dot":       os.ModeSymlink,
+			"/src/bar":        os.ModeDir,
+			"/src/bar/bar.go": 0,
+			"/src/foo":        os.ModeDir,
+			"/src/foo/foo.go": 0,
+			// "/src/foo/symlink": os.ModeSymlink,
+
+			// NOTE: the walkFn is not actually called for these files and
+			// we assert that in the callback, but we need these here for
+			// the test to pass with the current testFastWalk harness.
+			// "/src/bar/dot": os.ModeSymlink,
+			// "/src/bar/symdir": os.ModeSymlink,
 		})
 }
 
@@ -382,7 +697,7 @@ func TestFastWalk_SymlinkLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tempdir)
+	defer cleanupOrLogTempDir(t, tempdir)
 
 	if err := writeFile(tempdir+"/src/foo.go", "hello", 0644); err != nil {
 		t.Fatal(err)
@@ -396,12 +711,11 @@ func TestFastWalk_SymlinkLoop(t *testing.T) {
 	}
 	var walked int32
 	err = fastwalk.Walk(&conf, tempdir, func(path string, de fs.DirEntry, err error) error {
-		requireNoError(t, err)
+		if err != nil {
+			return err
+		}
 		if n := atomic.AddInt32(&walked, 1); n > 20 {
 			return fmt.Errorf("symlink loop: %d", n)
-		}
-		if de.Type()&os.ModeSymlink != 0 {
-			return fastwalk.ErrTraverseLink
 		}
 		return nil
 	})
@@ -506,6 +820,54 @@ func TestFastWalk_ErrPermission(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("walk mismatch.\n got:\n%v\nwant:\n%v", formatFileModes(got), formatFileModes(want))
+		diffFileModes(t, got, want)
+	}
+}
+
+func diffFileModes(t *testing.T, got, want map[string]os.FileMode) {
+	type Mode struct {
+		Name string
+		Mode os.FileMode
+	}
+	var extra []Mode
+	for k, v := range got {
+		if _, ok := want[k]; !ok {
+			extra = append(extra, Mode{k, v})
+		}
+	}
+	var missing []Mode
+	for k, v := range want {
+		if _, ok := got[k]; !ok {
+			missing = append(missing, Mode{k, v})
+		}
+	}
+	var delta []Mode
+	for k, v := range got {
+		if vv, ok := want[k]; ok && vv != v {
+			delta = append(delta, Mode{k, v}, Mode{k, vv})
+		}
+	}
+	w := new(strings.Builder)
+	printMode := func(name string, modes []Mode) {
+		if len(modes) == 0 {
+			return
+		}
+		sort.Slice(modes, func(i, j int) bool {
+			return modes[i].Name < modes[j].Name
+		})
+		if w.Len() == 0 {
+			w.WriteString("\n")
+		}
+		fmt.Fprintf(w, "%s:\n", name)
+		for _, m := range modes {
+			fmt.Fprintf(w, "  %-20s: %s\n", m.Name, m.Mode.String())
+		}
+	}
+	printMode("Extra", extra)
+	printMode("Missing", missing)
+	printMode("Delta", delta)
+	if w.Len() != 0 {
+		t.Error(w.String())
 	}
 }
 

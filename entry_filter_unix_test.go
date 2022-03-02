@@ -109,8 +109,8 @@ func TestEntryFilterFiles_Parallel(t *testing.T) {
 // TODO: delete?
 func BenchmarkEntryFilter_Seen(b *testing.B) {
 	rr := rand.New(rand.NewSource(1))
-	// pairs := GenerateDevIno(rr, 2, 8192)
-	pairs := generateDevIno(rr, 1, 8192)
+	pairs := generateDevIno(rr, 2, 8192)
+	// pairs := generateDevIno(rr, 1, 8192)
 	x := NewEntryFilter()
 
 	for _, p := range pairs {
@@ -130,8 +130,8 @@ func BenchmarkEntryFilter_Seen(b *testing.B) {
 // TODO: delete?
 func BenchmarkEntryFilter_Seen_Parallel(b *testing.B) {
 	rr := rand.New(rand.NewSource(1))
-	// pairs := GenerateDevIno(rr, 2, 8192)
-	pairs := generateDevIno(rr, 1, 8192)
+	pairs := generateDevIno(rr, 2, 8192)
+	// pairs := generateDevIno(rr, 1, 8192)
 	x := NewEntryFilter()
 
 	for _, p := range pairs {

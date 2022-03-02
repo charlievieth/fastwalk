@@ -54,14 +54,19 @@ var ErrTraverseLink = errors.New("fastwalk: traverse symlink, assuming target is
 // Child directories will still be traversed.
 var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 
+// SkipDir is used as a return value from WalkDirFuncs to indicate that
+// the directory named in the call is to be skipped. It is not returned
+// as an error by any function.
+var SkipDir = fs.SkipDir
+
 // DefaultNumWorkers is the default number of worker goroutines to use in
-// fastwalk.Walk and is in the range of 4 to 32.
+// fastwalk.Walk and is the value of runtime.NumCPU() clamped to a range
+// of 4 to 32.
 var DefaultNumWorkers = func() int {
 	numCPU := runtime.NumCPU()
 	if numCPU < 4 {
 		return 4
-	}
-	if numCPU > 32 {
+	} else if numCPU > 32 {
 		return 32
 	}
 	return numCPU
@@ -74,9 +79,17 @@ var DefaultConfig = Config{
 }
 
 type Config struct {
-	// TODO: better document Follow
+	// TODO: do we want to pass a sentinel error to WalkFunc if
+	// a symlink loop is detected?
 
-	// Follow symbolic links ignoring duplicate directories.
+	// Follow symbolic links ignoring directories that would lead
+	// to infinite loops; that is, entering a previously visited
+	// directory that is an ancestor of the last file encountered.
+	//
+	// The sentinel error ErrTraverseLink is ignored when Follow
+	// is true (this to prevent users from defeating the loop
+	// detection logic), but SkipDir and ErrSkipFiles are still
+	// respected.
 	Follow bool
 
 	// Number of parallel workers to use. If NumWorkers if ≤ 0 then
@@ -167,9 +180,13 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 
 		// buffered for correctness & not leaking goroutines:
 		resc: make(chan error, numWorkers),
+
+		follow: conf.Follow,
 	}
-	if conf.Follow {
-		w.filter = NewEntryFilter()
+	if w.follow {
+		if fi, err := os.Stat(root); err == nil {
+			w.ignoredDirs = append(w.ignoredDirs, fi)
+		}
 	}
 
 	defer close(w.donec)
@@ -178,6 +195,8 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		wg.Add(1)
 		go w.doWork(&wg)
 	}
+
+	root = cleanRootPath(root)
 	todo := []walkItem{{dir: root, info: fileInfoToDirEntry(filepath.Dir(root), fi)}}
 	out := 0
 	for {
@@ -217,6 +236,19 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	}
 }
 
+// WARN: do we want this?
+func cleanRootPath(root string) string {
+	for i := len(root) - 1; i >= 0; i-- {
+		if !os.IsPathSeparator(root[i]) {
+			return root[:i+1]
+		}
+	}
+	if root != "" {
+		return root[0:1] // root is all path separators ("//")
+	}
+	return root
+}
+
 // doWork reads directories as instructed (via workc) and runs the
 // user's callback function.
 func (w *walker) doWork(wg *sync.WaitGroup) {
@@ -243,7 +275,8 @@ type walker struct {
 	enqueuec chan walkItem // from workers
 	resc     chan error    // from workers
 
-	filter *EntryFilter // track files when walking links
+	ignoredDirs []os.FileInfo
+	follow      bool
 }
 
 type walkItem struct {
@@ -259,39 +292,78 @@ func (w *walker) enqueue(it walkItem) {
 	}
 }
 
-func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
-	joined := dirName + string(os.PathSeparator) + baseName
-	typ := de.Type()
-	if typ == os.ModeSymlink && w.filter != nil {
-		// Check if the symlink points to a directory before potentially
-		// enqueuing it.
-		if fi, _ := StatDirEntry(joined, de); fi != nil && fi.IsDir() {
-			if !w.filter.Entry(joined, de) {
-				w.enqueue(walkItem{dir: joined, info: de})
-			}
+func (w *walker) shouldSkipDir(fi os.FileInfo) bool {
+	for _, ignored := range w.ignoredDirs {
+		if os.SameFile(ignored, fi) {
+			return true
 		}
-		return nil
 	}
-	if typ == os.ModeDir {
-		if w.filter == nil || !w.filter.Entry(joined, de) {
-			w.enqueue(walkItem{dir: joined, info: de})
+	return false
+}
+
+func (w *walker) shouldTraverse(path string, de fs.DirEntry) bool {
+	// TODO: do we need to use filepath.EvalSymlinks() here?
+	ts, err := StatDirEntry(path, de)
+	if err != nil {
+		return false
+	}
+	if !ts.IsDir() {
+		return false
+	}
+	if w.shouldSkipDir(ts) {
+		return false
+	}
+	for {
+		parent := filepath.Dir(path)
+		if parent == path {
+			return true
 		}
+		parentInfo, err := os.Stat(parent)
+		if err != nil {
+			return false
+		}
+		if os.SameFile(ts, parentInfo) {
+			return false
+		}
+		path = parent
+	}
+}
+
+func joinPaths(dir, base string) string {
+	// Handle the case where the root path argument to Walk is "/"
+	// without this the returned path is prefixed with "//".
+	if os.PathSeparator == '/' && dir == "/" {
+		return dir + base
+	}
+	return dir + string(os.PathSeparator) + base
+}
+
+func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
+	joined := joinPaths(dirName, baseName)
+	typ := de.Type()
+	if typ == os.ModeDir {
+		w.enqueue(walkItem{dir: joined, info: de})
 		return nil
 	}
 
 	err := w.fn(joined, de, nil)
 	if typ == os.ModeSymlink {
-		// TODO: note that this only occurs when not-following symlinks
-		// (aka: w.seen == nil)
 		if err == ErrTraverseLink {
-			// Set callbackDone so we don't call it twice for both the
-			// symlink-as-symlink and the symlink-as-directory later:
-			w.enqueue(walkItem{dir: joined, callbackDone: true})
-			return nil
+			if !w.follow {
+				// Set callbackDone so we don't call it twice for both the
+				// symlink-as-symlink and the symlink-as-directory later:
+				w.enqueue(walkItem{dir: joined, info: de, callbackDone: true})
+				return nil
+			}
+			err = nil // Ignore ErrTraverseLink when Follow is true.
 		}
 		if err == filepath.SkipDir {
 			// Permit SkipDir on symlinks too.
 			return nil
+		}
+		if err == nil && w.follow && w.shouldTraverse(joined, de) {
+			// Traverse symlink
+			w.enqueue(walkItem{dir: joined, info: de, callbackDone: true})
 		}
 	}
 	return err
