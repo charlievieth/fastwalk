@@ -8,6 +8,8 @@ import (
 	"unsafe"
 )
 
+const useGetdirentries = true
+
 // Implemented in the runtime package (runtime/sys_darwin.go)
 func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
 
@@ -15,8 +17,6 @@ func syscall_syscall6(fn, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err s
 
 // Single-word zero for use when we need a valid pointer to 0 bytes.
 var _zero uintptr
-
-const useGetdirentries = true
 
 func getdirentries(fd int, buf []byte, basep *uintptr) (n int, err error) {
 	var _p0 unsafe.Pointer
