@@ -8,9 +8,10 @@
 Fast parallel directory traversal for Golang.
 
 Package fastwalk provides a fast parallel version of [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc)
-that is \~4x faster on Linux, \~2x faster on macOS, allocates 50% less memory,
-and requires 25% fewer memory allocations. Additionally, it is \~4-5x faster
-than [godirwalk](https://github.com/karrick/godirwalk) across OSes.
+that is \~2x faster on macOS, \~4x faster on Linux, \~6x faster on Windows,
+allocates 50% less memory, and requires 25% fewer memory allocations.
+Additionally, it is \~4-5x faster than [godirwalk](https://github.com/karrick/godirwalk)
+across OSes.
 
 Inspired by and based off of [golang.org/x/tools/internal/fastwalk](https://pkg.go.dev/golang.org/x/tools@v0.1.9/internal/fastwalk).
 
@@ -161,6 +162,34 @@ allocs/op     47.2k ± 0%     36.9k ± 0%     -21.80%
 time/op       13.7ms ±16%    2.8ms ± 2%     -79.88%
 alloc/op      7.48MB ± 0%    1.70MB ± 0%    -77.34%
 allocs/op     53.8k ± 0%     36.9k ± 0%     -31.38%
+```
+
+### Windows
+
+**Hardware:**
+```
+goos: windows
+goarch: amd64
+pkg: github.com/charlievieth/fastwalk
+cpu: Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz
+```
+
+#### [`filepath.WalkDir`](https://pkg.go.dev/path/filepath@go1.17.7#WalkDir) vs. [`fastwalk.Walk()`](https://pkg.go.dev/github.com/charlievieth/fastwalk#Walk):
+
+```
+              filepath       fastwalk       delta
+time/op       88.0ms ± 1%    14.6ms ± 1%    -83.47%
+alloc/op      5.68MB ± 0%    6.76MB ± 0%    +19.01%
+allocs/op     69.6k ± 0%     90.4k ± 0%     +29.87%
+```
+
+#### [`godirwalk.Walk()`](https://pkg.go.dev/github.com/karrick/godirwalk@v1.16.1#Walk) vs. [`fastwalk.Walk()`](https://pkg.go.dev/github.com/charlievieth/fastwalk#Walk):
+
+```
+              filepath       fastwalk       delta
+time/op       87.4ms ± 1%    14.6ms ± 1%    -83.34%
+alloc/op      6.14MB ± 0%    6.76MB ± 0%    +10.24%
+allocs/op     100k ± 0%      90k ± 0%       -9.59%
 ```
 
 ## Darwin: getdirentries64
