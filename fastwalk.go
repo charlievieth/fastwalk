@@ -154,7 +154,7 @@ type DirEntry interface {
 //     file. The result of Stat() may be cached.
 //   * Multiple goroutines stat the filesystem concurrently. The provided
 //     walkFn must be safe for concurrent use.
-//   * Walk can follow symlinks if walkFn returns the TraverseLink
+//   * Walk can follow symlinks if walkFn returns the ErrTraverseLink
 //     sentinel error. It is the walkFn's responsibility to prevent
 //     Walk from going into symlink cycles.
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
