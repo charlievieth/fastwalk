@@ -78,9 +78,7 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 	}
 }
 
-// TODO: we can probably use syscall.Dirent.Ino + the parents Dev to skip a call to stat
 func parseDirEnt(buf []byte) (consumed int, name string, typ os.FileMode) {
-
 	// golang.org/issue/37269
 	dirent := &syscall.Dirent{}
 	copy((*[unsafe.Sizeof(syscall.Dirent{})]byte)(unsafe.Pointer(dirent))[:], buf)

@@ -6,7 +6,6 @@ package fastwalk
 import (
 	"syscall"
 	"unsafe"
-	_ "unsafe"
 )
 
 // TODO(charlie): implement the closedir and readdir_r functions here instead

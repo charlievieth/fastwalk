@@ -42,7 +42,7 @@ func generateDevIno(rr *rand.Rand, ndev, size int) []devIno {
 	return pairs
 }
 
-func TestEntryFilterFiles(t *testing.T) {
+func TestEntryFilter_Unix(t *testing.T) {
 	rr := rand.New(rand.NewSource(1))
 	pairs := generateDevIno(rr, 2, 100)
 
@@ -59,7 +59,7 @@ func TestEntryFilterFiles(t *testing.T) {
 	}
 }
 
-func TestEntryFilterFiles_Parallel(t *testing.T) {
+func TestEntryFilter_Unix_Parallel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Short test")
 	}
@@ -106,11 +106,12 @@ func TestEntryFilterFiles_Parallel(t *testing.T) {
 	wg.Wait()
 }
 
-// TODO: delete?
-func BenchmarkEntryFilter_Seen(b *testing.B) {
+func BenchmarkEntryFilter_Unix(b *testing.B) {
+	if testing.Short() {
+		b.Skip("Skipping: short test")
+	}
 	rr := rand.New(rand.NewSource(1))
-	// pairs := GenerateDevIno(rr, 2, 8192)
-	pairs := generateDevIno(rr, 1, 8192)
+	pairs := generateDevIno(rr, 2, 8192)
 	x := NewEntryFilter()
 
 	for _, p := range pairs {
@@ -121,31 +122,19 @@ func BenchmarkEntryFilter_Seen(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		p := pairs[i%8192]
-		x.seen(p.Dev, p.Ino)
-	}
-}
-
-// TODO: delete?
-func BenchmarkEntryFilter_Seen_Parallel(b *testing.B) {
-	rr := rand.New(rand.NewSource(1))
-	// pairs := GenerateDevIno(rr, 2, 8192)
-	pairs := generateDevIno(rr, 1, 8192)
-	x := NewEntryFilter()
-
-	for _, p := range pairs {
-		x.seen(p.Dev, p.Ino)
-	}
-	if len(pairs) != 8192 {
-		panic("nope!")
-	}
-
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for i := 0; pb.Next(); i++ {
+	b.Run("Sequential", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
 			p := pairs[i%8192]
 			x.seen(p.Dev, p.Ino)
 		}
+	})
+
+	b.Run("Parallel", func(b *testing.B) {
+		b.RunParallel(func(pb *testing.PB) {
+			for i := 0; pb.Next(); i++ {
+				p := pairs[i%8192]
+				x.seen(p.Dev, p.Ino)
+			}
+		})
 	})
 }
