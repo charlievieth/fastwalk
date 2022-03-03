@@ -9,15 +9,12 @@ Fast parallel directory traversal for Golang.
 
 Package fastwalk provides a fast parallel version of [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc)
 that is \~4x faster on Linux, \~2x faster on macOS, allocates 50% less memory,
-and requires 25% fewer memory allocations.
+and requires 25% fewer memory allocations. Additionally, it is \~4-5x faster
+than [godirwalk](https://github.com/karrick/godirwalk) across OSes.
 
 Inspired by and based off of [golang.org/x/tools/internal/fastwalk](https://pkg.go.dev/golang.org/x/tools@v0.1.9/internal/fastwalk).
 
-<!-- TODO: mention EntryFilter -->
-
 ## Features
-
-<!--  and execution of the [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc) callback -->
 
 * Fast: multiple goroutines stat the filesystem and call the
   [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc) callback concurrently
@@ -184,6 +181,9 @@ Example of how to build and test that your program is not linked to `__getdirent
 
 # Build binary that imports fastwalk without linking to __getdirentries64.
 $ go build -tags nogetdirentries -o YOUR_BINARY
-# Test that __getdirentries64 is not linked.
-$ otool -dyld_info YOUR_BINARY | grep -F getdirentries64
+# Test that __getdirentries64 is not linked (this should print no output).
+$ ! otool -dyld_info YOUR_BINARY | grep -F getdirentries64
 ```
+
+There is a also a script [scripts/links2getdirentries.bash](scripts/links2getdirentries.bash)
+that can be used to check if a program binary links to getdirentries.
