@@ -10,7 +10,7 @@
 Fast parallel directory traversal for Golang.
 
 Package fastwalk provides a fast parallel version of [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc)
-that is \~4x faster on Linux, \~1.5x faster on macOS, allocates 50% less memory,
+that is \~4x faster on Linux, \~2x faster on macOS, allocates 50% less memory,
 and requires 25% fewer memory allocations.
 
 <!-- TODO: mention EntryFilter -->
@@ -138,8 +138,8 @@ cpu: Apple M1 Max
 #### [`filepath.WalkDir`](https://pkg.go.dev/path/filepath@go1.17.7#WalkDir) vs. [`fastwalk.Walk()`](https://pkg.go.dev/github.com/charlievieth/fastwalk#Walk):
 ```
               filepath       fastwalk       delta
-time/op       28.9ms ± 1%    18.0ms ± 2%    -37.88%
-alloc/op      4.33MB ± 0%    2.14MB ± 0%    -50.67%
+time/op       27.9ms ± 1%    13.0ms ± 1%    -53.33%
+alloc/op      4.33MB ± 0%    2.14MB ± 0%    -50.55%
 allocs/op     50.9k ± 0%     37.7k ± 0%     -26.01%
 ```
 
