@@ -1,5 +1,5 @@
 module github.com/charlievieth/fastwalk
 
-go 1.17
+go 1.18
 
-require github.com/karrick/godirwalk v1.16.1
+require github.com/karrick/godirwalk v1.17.0
