@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,7 +65,7 @@ func writeFile(filename string, data interface{}, perm os.FileMode) error {
 func symlink(t testing.TB, oldname, newname string) error {
 	err := os.Symlink(oldname, newname)
 	if err != nil {
-		if writeErr := ioutil.WriteFile(newname, []byte(newname), 0644); writeErr == nil {
+		if writeErr := os.WriteFile(newname, []byte(newname), 0644); writeErr == nil {
 			// Couldn't create symlink, but could write the file.
 			// Probably this filesystem doesn't support symlinks.
 			// (Perhaps we are on an older Windows and not running as administrator.)
@@ -99,7 +98,7 @@ func testCreateFiles(t *testing.T, tempdir string, files map[string]string) {
 		if strings.HasPrefix(contents, "LINK:") {
 			symlinks[file] = filepath.FromSlash(strings.TrimPrefix(contents, "LINK:"))
 		} else {
-			err = ioutil.WriteFile(file, []byte(contents), 0644)
+			err = os.WriteFile(file, []byte(contents), 0644)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -116,7 +115,7 @@ func testCreateFiles(t *testing.T, tempdir string, files map[string]string) {
 }
 
 func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]string, callback fs.WalkDirFunc, want map[string]os.FileMode) {
-	tempdir, err := ioutil.TempDir("", "test-fast-walk")
+	tempdir, err := os.MkdirTemp("", "test-fast-walk")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +451,7 @@ func TestFastWalk_Follow_SkipDir(t *testing.T) {
 }
 
 func TestFastWalk_Follow_SymlinkLoop(t *testing.T) {
-	tempdir, err := ioutil.TempDir("", "test-fast-walk")
+	tempdir, err := os.MkdirTemp("", "test-fast-walk")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +777,7 @@ func BenchmarkFastWalkNumWorkers(b *testing.B) {
 	b.Run("Stat", func(b *testing.B) {
 		runBench(b, func(path string, d fs.DirEntry, err error) error {
 			if err == nil && d.Type().IsRegular() {
-				d.Info()
+				_, _ = d.Info()
 			}
 			return err
 		})

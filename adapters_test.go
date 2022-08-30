@@ -3,7 +3,6 @@ package fastwalk_test
 import (
 	"errors"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,7 +17,7 @@ import (
 )
 
 func TestIgnoreDuplicateDirs(t *testing.T) {
-	tempdir, err := ioutil.TempDir("", "test-fast-walk")
+	tempdir, err := os.MkdirTemp("", "test-fast-walk")
 	if err != nil {
 		t.Fatal(err)
 	}
