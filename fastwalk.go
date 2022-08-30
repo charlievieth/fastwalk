@@ -146,15 +146,15 @@ type DirEntry interface {
 // If walkFn returns filepath.SkipDir, the directory is skipped.
 //
 // Unlike filepath.WalkDir:
-//   * File stat calls must be done by the user and should be done via
+//   - File stat calls must be done by the user and should be done via
 //     the DirEntry argument to walkFn since it caches the results of
 //     Stat and Lstat.
-//   * The fs.DirEntry argument is always a fastwalk.DirEntry, which has
+//   - The fs.DirEntry argument is always a fastwalk.DirEntry, which has
 //     a Stat() method that returns the result of calling os.Stat() on the
 //     file. The result of Stat() may be cached.
-//   * Multiple goroutines stat the filesystem concurrently. The provided
+//   - Multiple goroutines stat the filesystem concurrently. The provided
 //     walkFn must be safe for concurrent use.
-//   * Walk can follow symlinks if walkFn returns the ErrTraverseLink
+//   - Walk can follow symlinks if walkFn returns the ErrTraverseLink
 //     sentinel error. It is the walkFn's responsibility to prevent
 //     Walk from going into symlink cycles.
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {

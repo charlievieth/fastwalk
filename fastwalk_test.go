@@ -732,11 +732,10 @@ func BenchmarkFastWalkAdapters(b *testing.B) {
 // Benchmark various tasks with different worker counts.
 //
 // Observations:
-// 	* Linux (Intel i9-9900K / Samsung Pro NVMe): consistently benefits from
-// 	  more workers
-// 	* Darwin (m1): IO heavy tasks (Readfile and Stat) and Traversal perform
-// 	  best with 4 workers, and only CPU bound tasks benefit from more workers
-//
+//   - Linux (Intel i9-9900K / Samsung Pro NVMe): consistently benefits from
+//     more workers
+//   - Darwin (m1): IO heavy tasks (Readfile and Stat) and Traversal perform
+//     best with 4 workers, and only CPU bound tasks benefit from more workers
 func BenchmarkFastWalkNumWorkers(b *testing.B) {
 	if testing.Short() {
 		b.Skip("Skipping: short test")

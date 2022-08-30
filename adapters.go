@@ -36,11 +36,10 @@ func isDir(path string, d fs.DirEntry) bool {
 // are links to it, only one of "dir", "smydir1", or "smydir2" will be
 // traversed, but which one is undefined.
 //
-// 	example
-// 	├── dir
-// 	├── smydir1 -> dir
-// 	└── smydir2 -> dir
-//
+//	example
+//	├── dir
+//	├── smydir1 -> dir
+//	└── smydir2 -> dir
 func IgnoreDuplicateDirs(walkFn fs.WalkDirFunc) fs.WalkDirFunc {
 	filter := NewEntryFilter()
 	return func(path string, d fs.DirEntry, err error) error {
