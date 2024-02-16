@@ -1,5 +1,5 @@
-//go:build appengine || (!linux && !darwin && !freebsd && !openbsd && !netbsd)
-// +build appengine !linux,!darwin,!freebsd,!openbsd,!netbsd
+//go:build appengine || solaris || (!linux && !darwin && !freebsd && !openbsd && !netbsd)
+// +build appengine solaris !linux,!darwin,!freebsd,!openbsd,!netbsd
 
 package fastwalk
 
