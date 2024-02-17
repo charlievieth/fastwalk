@@ -18,7 +18,7 @@ Inspired by and based off of [golang.org/x/tools/internal/fastwalk](https://pkg.
 ## Features
 
 * Fast: multiple goroutines stat the filesystem and call the
-  [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc) callback concurrently
+  [`filepath.WalkDirFunc`](https://pkg.go.dev/io/fs#WalkDirFunc) callback concurrently
 * Safe symbolic link traversal ([`Config.Follow`](https://pkg.go.dev/github.com/charlievieth/fastwalk#Config))
 * Same behavior and callback signature as [`filepath.WalkDir`](https://pkg.go.dev/path/filepath@go1.17.7#WalkDir)
 * Wrapper functions are provided to ignore duplicate files and directories:
