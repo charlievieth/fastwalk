@@ -18,8 +18,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/karrick/godirwalk"
-
 	"github.com/charlievieth/fastwalk"
 )
 
@@ -846,18 +844,7 @@ func BenchmarkWalkComparison(b *testing.B) {
 	case "fastwalk":
 		benchmarkFastWalk(b, nil, nil)
 	case "godirwalk":
-		opts := godirwalk.Options{
-			Unsorted: true,
-			Callback: func(_ string, _ *godirwalk.Dirent) error {
-				return nil
-			},
-		}
-		for i := 0; i < b.N; i++ {
-			err := godirwalk.Walk(*benchDir, &opts)
-			if err != nil {
-				b.Fatal(err)
-			}
-		}
+		b.Fatal("comparisons with godirwalk are no longer supported")
 	case "filepath":
 		for i := 0; i < b.N; i++ {
 			err := filepath.WalkDir(*benchDir, func(_ string, _ fs.DirEntry, _ error) error {

@@ -19,7 +19,6 @@ func init() {
 
 var Tests = []string{
 	"filepath",
-	"godirwalk",
 	"fastwalk",
 }
 
