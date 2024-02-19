@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/saracen/walker"
+
 	"github.com/charlievieth/fastwalk"
 )
 
@@ -848,6 +850,15 @@ func BenchmarkWalkComparison(b *testing.B) {
 	case "filepath":
 		for i := 0; i < b.N; i++ {
 			err := filepath.WalkDir(*benchDir, func(_ string, _ fs.DirEntry, _ error) error {
+				return nil
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	case "walker":
+		for i := 0; i < b.N; i++ {
+			err := walker.Walk(*benchDir, func(_ string, _ fs.FileInfo) error {
 				return nil
 			})
 			if err != nil {

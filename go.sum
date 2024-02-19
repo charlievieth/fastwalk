@@ -1,0 +1,4 @@
+github.com/saracen/walker v0.1.4 h1:/WCOt98GRkQ0KgL6hXJFBpoH21XY6iCD2N6LQWBFiaU=
+github.com/saracen/walker v0.1.4/go.mod h1:2F+hfOidTHfXP2AmlKOqpO+yewf8fIvNUDBNJogpJbk=
+golang.org/x/sync v0.6.0 h1:5BMeUDZ7vkXGfEr1x9B4bRcTH4lpkTkpdh0T/J+qjbQ=
+golang.org/x/sync v0.6.0/go.mod h1:Czt+wKu1gCyEFDUtn0jG5QVvpJ6rzVqr5aXyt9drQfk=
