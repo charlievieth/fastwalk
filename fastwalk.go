@@ -107,8 +107,29 @@ type Config struct {
 	// respected.
 	Follow bool
 
+	// Sort files in lexical order before walking. Regular files are visited
+	// before all other files making the walk a bit more breadth-first and
+	// making the output a bit cleaner when, for example, printing. This is
+	// because we serially process directory entries, but process directories
+	// in parallel.
+	//
+	// The order that files are visited is deterministic only at the directory
+	// level, but not generally deterministic because we process directories
+	// in parallel.
+	//
+	// Sorting impacts performance in two ways: the first is that sorting adds
+	// a bit of overhead (though it is generally negligible compared to the
+	// syscalls required to read directories); the second is that since this
+	// changes Walk to visit regular files first it delays the queuing of
+	// directories for processing which can negatively impact parallelism,
+	// (this will be particularly evident if some time consuming processing
+	// is performed on each visited regular file - confusingly this lack of
+	// parallelism can sometimes improve performance - YMMV).
+	Sort bool
+
 	// Number of parallel workers to use. If NumWorkers if ≤ 0 then
-	// the greater of runtime.NumCPU() or 4 is used.
+	// the result of DefaultNumWorkers is used (this is usually the
+	// optimum value on most platforms - darwin/macOS in particular).
 	NumWorkers int
 }
 
@@ -188,6 +209,7 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		resc: make(chan error, numWorkers),
 
 		follow: conf.Follow,
+		sort:   conf.Sort,
 	}
 	if w.follow {
 		if fi, err := os.Stat(root); err == nil {
@@ -270,6 +292,7 @@ type walker struct {
 
 	ignoredDirs []os.FileInfo
 	follow      bool
+	sort        bool
 }
 
 type walkItem struct {
@@ -373,7 +396,8 @@ func (w *walker) walk(root string, info fs.DirEntry, runUserCallback bool) error
 		}
 	}
 
-	err := readDir(root, w.onDirEnt)
+	// err := readDir(root, w.onDirEnt)
+	err := w.readDir(root)
 	if err != nil {
 		// Second call, to report ReadDir error.
 		return w.fn(root, info, err)

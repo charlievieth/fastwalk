@@ -709,6 +709,10 @@ func BenchmarkFastWalk(b *testing.B) {
 	benchmarkFastWalk(b, nil, nil)
 }
 
+func BenchmarkFastWalkSort(b *testing.B) {
+	benchmarkFastWalk(b, &fastwalk.Config{Sort: true}, nil)
+}
+
 func BenchmarkFastWalkFollow(b *testing.B) {
 	benchmarkFastWalk(b, &fastwalk.Config{Follow: true}, nil)
 }

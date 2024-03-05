@@ -4,15 +4,17 @@
 package fastwalk
 
 import (
+	"cmp"
 	"io/fs"
 	"os"
+	"slices"
 )
 
 // readDir calls fn for each directory entry in dirName.
 // It does not descend into directories or follow symlinks.
 // If fn returns a non-nil error, readDir returns with that error
 // immediately.
-func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
+func (w *walker) readDir(dirName string) error {
 	f, err := os.Open(dirName)
 	if err != nil {
 		return err
@@ -23,6 +25,12 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 		return readErr
 	}
 
+	if w.sort {
+		slices.SortFunc(des, func(d1, d2 fs.DirEntry) int {
+			return cmp.Compare(d1.Name(), d2.Name())
+		})
+	}
+
 	var skipFiles bool
 	for _, d := range des {
 		if skipFiles && d.Type().IsRegular() {
@@ -30,7 +38,7 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 		}
 		// Need to use FileMode.Type().Type() for fs.DirEntry
 		e := newDirEntry(dirName, d)
-		if err := fn(dirName, d.Name(), e); err != nil {
+		if err := w.onDirEnt(dirName, d.Name(), e); err != nil {
 			if err != ErrSkipFiles {
 				return err
 			}
