@@ -9,8 +9,8 @@ package fastwalk
 
 import "syscall"
 
-func direntNamlen(dirent *syscall.Dirent) uint64 {
-	return uint64(dirent.Namlen)
+func direntNamlen(dirent *syscall.Dirent) (uint64, error) {
+	return uint64(dirent.Namlen), nil
 }
 
 func direntInode(dirent *syscall.Dirent) uint64 {

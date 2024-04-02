@@ -8,11 +8,12 @@
 package fastwalk
 
 import (
+	"errors"
 	"syscall"
 	"unsafe"
 )
 
-func direntNamlen(dirent *syscall.Dirent) uint64 {
+func direntNamlen(dirent *syscall.Dirent) (uint64, error) {
 	const fixedHdr = uint16(unsafe.Offsetof(syscall.Dirent{}.Name))
 	nameBuf := (*[unsafe.Sizeof(dirent.Name)]byte)(unsafe.Pointer(&dirent.Name[0]))
 	const nameBufLen = uint16(len(nameBuf))
@@ -22,10 +23,10 @@ func direntNamlen(dirent *syscall.Dirent) uint64 {
 	}
 	for i := uint64(0); i < uint64(limit); i++ {
 		if nameBuf[i] == 0 {
-			return i
+			return i, nil
 		}
 	}
-	panic("failed to find terminating 0 byte in dirent")
+	return 0, errors.New("failed to find terminating 0 byte in dirent")
 }
 
 func direntInode(dirent *syscall.Dirent) uint64 {

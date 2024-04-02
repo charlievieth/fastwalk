@@ -9,6 +9,7 @@
 package fastwalk
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -45,7 +46,10 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 				return nil
 			}
 		}
-		consumed, name, typ := parseDirEnt(buf[bufp:nbuf])
+		consumed, name, typ, err := parseDirEnt(buf[bufp:nbuf])
+		if err != nil {
+			return os.NewSyscallError("readdirent", err)
+		}
 		bufp += consumed
 		if name == "" || name == "." || name == ".." {
 			continue
@@ -78,15 +82,17 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 	}
 }
 
-func parseDirEnt(buf []byte) (consumed int, name string, typ os.FileMode) {
+func parseDirEnt(buf []byte) (consumed int, name string, typ os.FileMode, err error) {
 	// golang.org/issue/37269
 	dirent := &syscall.Dirent{}
 	copy((*[unsafe.Sizeof(syscall.Dirent{})]byte)(unsafe.Pointer(dirent))[:], buf)
 	if v := unsafe.Offsetof(dirent.Reclen) + unsafe.Sizeof(dirent.Reclen); uintptr(len(buf)) < v {
-		panic(fmt.Sprintf("buf size of %d smaller than dirent header size %d", len(buf), v))
+		err = errors.New(fmt.Sprintf("buf size of %d smaller than dirent header size %d", len(buf), v))
+		return
 	}
 	if len(buf) < int(dirent.Reclen) {
-		panic(fmt.Sprintf("buf size %d < record length %d", len(buf), dirent.Reclen))
+		err = errors.New(fmt.Sprintf("buf size %d < record length %d", len(buf), dirent.Reclen))
+		return
 	}
 	consumed = int(dirent.Reclen)
 	if direntInode(dirent) == 0 { // File absent in directory.
@@ -117,7 +123,11 @@ func parseDirEnt(buf []byte) (consumed int, name string, typ os.FileMode) {
 	}
 
 	nameBuf := (*[unsafe.Sizeof(dirent.Name)]byte)(unsafe.Pointer(&dirent.Name[0]))
-	nameLen := direntNamlen(dirent)
+	var nameLen uint64
+	nameLen, err = direntNamlen(dirent)
+	if err != nil {
+		return
+	}
 
 	// Special cases for common things:
 	if nameLen == 1 && nameBuf[0] == '.' {
