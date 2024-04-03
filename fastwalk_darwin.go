@@ -15,14 +15,6 @@ import (
 //sys	readdir_r(dir uintptr, entry *Dirent, result **Dirent) (res Errno)
 
 func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
-	if useGetdirentries {
-		return readDir_Getdirentries(dirName, fn)
-	} else {
-		return readDir_Readir(dirName, fn)
-	}
-}
-
-func readDir_Readir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
 	fd, err := opendir(dirName)
 	if err != nil {
 		return &os.PathError{Op: "opendir", Path: dirName, Err: err}
@@ -79,66 +71,6 @@ var direntBufPool = sync.Pool{
 		b := make([]byte, direntBufSize)
 		return &b
 	},
-}
-
-func readDir_Getdirentries(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
-	// This will cause the rest of the function to be omitted.
-	if !useGetdirentries {
-		panic("NOT IMPLEMENTED")
-	}
-
-	fd, err := syscall.Open(dirName, syscall.O_RDONLY, 0)
-	if err != nil {
-		return &os.PathError{Op: "open", Path: dirName, Err: err}
-	}
-	defer syscall.Close(fd)
-
-	p := direntBufPool.Get().(*[]byte)
-	defer direntBufPool.Put(p)
-	dbuf := *p
-
-	var skipFiles bool
-	var basep uintptr
-	for {
-		length, err := getdirentries(fd, dbuf, &basep)
-		if err != nil {
-			return &os.PathError{Op: "getdirentries64", Path: dirName, Err: err}
-		}
-		if length == 0 {
-			break
-		}
-		buf := (*[1 << 30]byte)(unsafe.Pointer(&dbuf[0]))[:length:length]
-		for len(buf) > 0 {
-			dirent := (*syscall.Dirent)(unsafe.Pointer(&buf[0]))
-			buf = buf[dirent.Reclen:]
-			if dirent.Ino == 0 {
-				continue
-			}
-			typ := dtToType(dirent.Type)
-			if skipFiles && typ.IsRegular() {
-				continue
-			}
-			name := (*[len(syscall.Dirent{}.Name)]byte)(unsafe.Pointer(&dirent.Name))[:]
-			for i, c := range name {
-				if c == 0 {
-					name = name[:i]
-					break
-				}
-			}
-			if string(name) == "." || string(name) == ".." {
-				continue
-			}
-			nm := string(name)
-			if err := fn(dirName, nm, newUnixDirent(dirName, nm, typ)); err != nil {
-				if err != ErrSkipFiles {
-					return err
-				}
-				skipFiles = true
-			}
-		}
-	}
-
-	return nil
 }
 
 func dtToType(typ uint8) os.FileMode {

@@ -185,20 +185,26 @@ func TestFastWalk_Basic(t *testing.T) {
 }
 
 func TestFastWalk_LongFileName(t *testing.T) {
-	longFileName := strings.Repeat("x", 255)
-
-	testFastWalk(t, map[string]string{
-		longFileName: "one",
-	},
+	want := map[string]os.FileMode{
+		"":     os.ModeDir,
+		"/src": os.ModeDir,
+	}
+	files := make(map[string]string)
+	for r := 'a'; r < 'd'; r++ {
+		s := string(r)
+		name := s + "/" + strings.Repeat(s, 255)
+		for i := len("_/") + 1; i <= len(name); i++ {
+			files[name[:i]] = "1"
+			want["/src/"+name[:i]] = 0
+		}
+		want["/src/"+s] = os.ModeDir
+	}
+	testFastWalk(t, files,
 		func(path string, typ fs.DirEntry, err error) error {
 			requireNoError(t, err)
 			return nil
 		},
-		map[string]os.FileMode{
-			"":                     os.ModeDir,
-			"/src":                 os.ModeDir,
-			"/src/" + longFileName: 0,
-		},
+		want,
 	)
 }
 
