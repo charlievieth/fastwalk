@@ -7,15 +7,14 @@ import (
 	"flag"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"testing"
 )
 
 func TestDarwinReaddir(t *testing.T) {
-	if useGetdirentries == false {
-		t.Skip("Skipping due to 'nogetdirentries' build tag")
-	}
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -25,17 +24,13 @@ func TestDarwinReaddir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var rdEnts []fs.DirEntry
-	err = readDir_Readir(wd, func(_, _ string, de fs.DirEntry) error {
-		rdEnts = append(rdEnts, de)
-		return nil
-	})
+	rdEnts, err := os.ReadDir(wd)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var gdEnts []fs.DirEntry
-	err = readDir_Getdirentries(wd, func(_, _ string, de fs.DirEntry) error {
+	err = readDir(wd, func(_, _ string, de fs.DirEntry) error {
 		gdEnts = append(gdEnts, de)
 		return nil
 	})
@@ -87,40 +82,48 @@ func noopReadDirFunc(_, _ string, _ fs.DirEntry) error {
 	return nil
 }
 
-func BenchmarkReadDir_Getdirentries(b *testing.B) {
-	dirname := *benchDir
-	for i := 0; i < b.N; i++ {
-		if err := readDir_Getdirentries(dirname, noopReadDirFunc); err != nil {
+func benchmarkReadDir(b *testing.B, parallel bool, fn func(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error) {
+	mktemp := func(sz int) string {
+		dir := filepath.Join(b.TempDir(), strconv.Itoa(sz))
+		if err := os.MkdirAll(dir, 0755); err != nil {
 			b.Fatal(err)
 		}
-	}
-}
-
-func BenchmarkReadDir_Getdirentries_Parallel(b *testing.B) {
-	dirname := *benchDir
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			if err := readDir_Getdirentries(dirname, noopReadDirFunc); err != nil {
+		for i := 0; i < sz; i++ {
+			name := strconv.Itoa(i)
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0644); err != nil {
 				b.Fatal(err)
 			}
 		}
-	})
-}
-
-func BenchmarkReadDir_Readir(b *testing.B) {
-	dirname := *benchDir
-	for i := 0; i < b.N; i++ {
-		if err := readDir_Readir(dirname, noopReadDirFunc); err != nil {
-			b.Fatal(err)
-		}
+		return dir
+	}
+	sizes := []int{4, 8, 16, 32, 64, 128, 256}
+	for _, sz := range sizes {
+		dir := mktemp(sz)
+		b.Run(strconv.Itoa(sz), func(b *testing.B) {
+			if parallel {
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						fn(dir, noopReadDirFunc)
+					}
+				})
+			} else {
+				for i := 0; i < b.N; i++ {
+					fn(dir, noopReadDirFunc)
+				}
+			}
+		})
 	}
 }
 
-func BenchmarkReadDir_Readdir_Parallel(b *testing.B) {
+func BenchmarkReadDir(b *testing.B) {
+	benchmarkReadDir(b, false, readDir)
+}
+
+func BenchmarkReadDirParallel(b *testing.B) {
 	dirname := *benchDir
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			if err := readDir_Readir(dirname, noopReadDirFunc); err != nil {
+			if err := readDir(dirname, noopReadDirFunc); err != nil {
 				b.Fatal(err)
 			}
 		}

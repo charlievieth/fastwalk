@@ -184,21 +184,60 @@ func TestFastWalk_Basic(t *testing.T) {
 		})
 }
 
-func TestFastWalk_LongFileName(t *testing.T) {
-	longFileName := strings.Repeat("x", 255)
+func maxFileNameLength(t testing.TB) int {
+	tmp := t.TempDir()
+	long := strings.Repeat("a", 8192)
 
-	testFastWalk(t, map[string]string{
-		longFileName: "one",
-	},
+	// Returns if n is an invalid file name length
+	invalidLength := func(n int) bool {
+		path := filepath.Join(tmp, long[:n])
+		err := os.WriteFile(path, []byte("1"), 0644)
+		if err == nil {
+			os.Remove(path)
+		}
+		return err != nil
+	}
+
+	// Use a binary search to find the max filename length (+1)
+	n := sort.Search(8192, invalidLength)
+	if n <= 1 {
+		t.Fatal("Failed to find the max filename length:", n)
+	}
+	max := n - 1
+	if invalidLength(max) {
+		t.Fatal("Failed to find the max filename length:", n)
+	}
+	return max
+}
+
+// This test identified a "checkptr: converted pointer straddles multiple allocations"
+// error on darwin when getdirentries64 was used with the race-detector enabled.
+func TestFastWalk_LongFileName(t *testing.T) {
+	maxNameLen := maxFileNameLength(t)
+	if maxNameLen > 255 {
+		maxNameLen = 255
+	}
+	want := map[string]os.FileMode{
+		"":     os.ModeDir,
+		"/src": os.ModeDir,
+	}
+	files := make(map[string]string)
+	// This triggers with only one sub-directory but use 2 just to be sure.
+	for r := 'a'; r <= 'b'; r++ {
+		s := string(r)
+		name := s + "/" + strings.Repeat(s, maxNameLen)
+		for i := len("_/") + 1; i <= len(name); i++ {
+			files[name[:i]] = "1"
+			want["/src/"+name[:i]] = 0
+		}
+		want["/src/"+s] = os.ModeDir
+	}
+	testFastWalk(t, files,
 		func(path string, typ fs.DirEntry, err error) error {
 			requireNoError(t, err)
 			return nil
 		},
-		map[string]os.FileMode{
-			"":                     os.ModeDir,
-			"/src":                 os.ModeDir,
-			"/src/" + longFileName: 0,
-		},
+		want,
 	)
 }
 
