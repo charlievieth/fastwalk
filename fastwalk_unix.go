@@ -9,14 +9,15 @@
 package fastwalk
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"syscall"
-	"unsafe"
+
+	"github.com/charlievieth/fastwalk/internal/dirent"
 )
 
-const blockSize = 8 << 10
+// More than 5760 to work around https://golang.org/issue/24015.
+const blockSize = 8192
 
 // unknownFileMode is a sentinel (and bogus) os.FileMode
 // value used to represent a syscall.DT_UNKNOWN Dirent.Type.
@@ -45,8 +46,9 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 				return nil
 			}
 		}
-		consumed, name, typ := parseDirEnt(buf[bufp:nbuf])
+		consumed, name, typ := dirent.Parse(buf[bufp:nbuf])
 		bufp += consumed
+
 		if name == "" || name == "." || name == ".." {
 			continue
 		}
@@ -76,58 +78,6 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 			return err
 		}
 	}
-}
-
-func parseDirEnt(buf []byte) (consumed int, name string, typ os.FileMode) {
-	// golang.org/issue/37269
-	dirent := &syscall.Dirent{}
-	copy((*[unsafe.Sizeof(syscall.Dirent{})]byte)(unsafe.Pointer(dirent))[:], buf)
-	if v := unsafe.Offsetof(dirent.Reclen) + unsafe.Sizeof(dirent.Reclen); uintptr(len(buf)) < v {
-		panic(fmt.Sprintf("buf size of %d smaller than dirent header size %d", len(buf), v))
-	}
-	if len(buf) < int(dirent.Reclen) {
-		panic(fmt.Sprintf("buf size %d < record length %d", len(buf), dirent.Reclen))
-	}
-	consumed = int(dirent.Reclen)
-	if direntInode(dirent) == 0 { // File absent in directory.
-		return
-	}
-	switch dirent.Type {
-	case syscall.DT_REG:
-		typ = 0
-	case syscall.DT_DIR:
-		typ = os.ModeDir
-	case syscall.DT_LNK:
-		typ = os.ModeSymlink
-	case syscall.DT_BLK:
-		typ = os.ModeDevice
-	case syscall.DT_FIFO:
-		typ = os.ModeNamedPipe
-	case syscall.DT_SOCK:
-		typ = os.ModeSocket
-	case syscall.DT_UNKNOWN:
-		typ = unknownFileMode
-	default:
-		// Skip weird things.
-		// It's probably a DT_WHT (http://lwn.net/Articles/325369/)
-		// or something. Revisit if/when this package is moved outside
-		// of goimports. goimports only cares about regular files,
-		// symlinks, and directories.
-		return
-	}
-
-	nameBuf := (*[unsafe.Sizeof(dirent.Name)]byte)(unsafe.Pointer(&dirent.Name[0]))
-	nameLen := direntNamlen(dirent)
-
-	// Special cases for common things:
-	if nameLen == 1 && nameBuf[0] == '.' {
-		name = "."
-	} else if nameLen == 2 && nameBuf[0] == '.' && nameBuf[1] == '.' {
-		name = ".."
-	} else {
-		name = string(nameBuf[:nameLen])
-	}
-	return
 }
 
 // According to https://golang.org/doc/go1.14#runtime
