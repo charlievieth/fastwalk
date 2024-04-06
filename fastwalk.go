@@ -158,13 +158,13 @@ type DirEntry interface {
 //     sentinel error. It is the walkFn's responsibility to prevent
 //     Walk from going into symlink cycles.
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
+	fi, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
 	if conf == nil {
 		dupe := DefaultConfig
 		conf = &dupe
-	}
-	fi, err := os.Lstat(root)
-	if err != nil {
-		return err
 	}
 
 	// Make sure to wait for all workers to finish, otherwise
@@ -190,9 +190,7 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		follow: conf.Follow,
 	}
 	if w.follow {
-		if fi, err := os.Stat(root); err == nil {
-			w.ignoredDirs = append(w.ignoredDirs, fi)
-		}
+		w.ignoredDirs = append(w.ignoredDirs, fi)
 	}
 
 	defer close(w.donec)
