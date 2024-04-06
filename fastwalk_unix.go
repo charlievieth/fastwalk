@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build (linux || freebsd || openbsd || netbsd) && !appengine
-// +build linux freebsd openbsd netbsd
-// +build !appengine
+//go:build aix || dragonfly || freebsd || (js && wasm) || linux || netbsd || openbsd || solaris
 
 package fastwalk
 

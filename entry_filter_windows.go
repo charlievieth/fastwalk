@@ -1,5 +1,4 @@
-//go:build windows && !appengine
-// +build windows,!appengine
+//go:build windows
 
 package fastwalk
 
