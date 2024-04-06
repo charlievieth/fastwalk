@@ -52,7 +52,7 @@ func newUnixDirent(parent, name string, typ os.FileMode) *unixDirent {
 	}
 }
 
-func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
+func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
 	info := &fileInfo{
 		FileInfo: fi,
 	}
@@ -95,7 +95,7 @@ func (w *walker) readDir(dirName string) error {
 	defer putDirentSlice(ds)
 	ds.dirents = ds.dirents[:0]
 
-	err := readDir(dirName, func(_, _ string, de fs.DirEntry) error {
+	err := readDir(dirName, func(_, _ string, de DirEntry) error {
 		ds.dirents = append(ds.dirents, de.(*unixDirent))
 		return nil
 	})
@@ -106,6 +106,9 @@ func (w *walker) readDir(dirName string) error {
 		return cmp.Compare(d1.name, d2.name) // TODO: is strings.Compare faster?
 	})
 
+	// TODO: switch over to use a SortMode instead to give us flexibility
+	// in the future.
+	//
 	// NB: Processing regular files first produces a "cleaner" output at the
 	// cost of not queuing more directories for parallel processing.
 

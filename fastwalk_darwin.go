@@ -4,7 +4,6 @@
 package fastwalk
 
 import (
-	"io/fs"
 	"os"
 	"sync"
 	"syscall"
@@ -14,7 +13,7 @@ import (
 //sys	closedir(dir uintptr) (err error)
 //sys	readdir_r(dir uintptr, entry *Dirent, result **Dirent) (res Errno)
 
-func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
+func readDir(dirName string, fn func(dirName, entName string, de DirEntry) error) error {
 	if useGetdirentries {
 		return readDir_Getdirentries(dirName, fn)
 	} else {
@@ -22,7 +21,7 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 	}
 }
 
-func readDir_Readir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
+func readDir_Readir(dirName string, fn func(dirName, entName string, de DirEntry) error) error {
 	fd, err := opendir(dirName)
 	if err != nil {
 		return &os.PathError{Op: "opendir", Path: dirName, Err: err}
@@ -81,7 +80,7 @@ var direntBufPool = sync.Pool{
 	},
 }
 
-func readDir_Getdirentries(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
+func readDir_Getdirentries(dirName string, fn func(dirName, entName string, de DirEntry) error) error {
 	// This will cause the rest of the function to be omitted.
 	if !useGetdirentries {
 		panic("NOT IMPLEMENTED")

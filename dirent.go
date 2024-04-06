@@ -30,11 +30,8 @@ func loadFileInfo(pinfo **fileInfo) *fileInfo {
 	return fi
 }
 
-// StatDirEntry returns the fs.FileInfo for the file or subdirectory described
-// by the entry. If the entry is a symbolic link, StatDirEntry returns the
-// fs.FileInfo for the file the link references (os.Stat).
-// If fs.DirEntry de is a fastwalk.DirEntry it's Stat() method is used and the
-// returned fs.FileInfo may be a previously cached result.
+// StatDirEntry returns the result of calling [os.Stat] on path. If de is a
+// [fastwalk.DirEntry] its Stat method is used and may return a cached result.
 func StatDirEntry(path string, de fs.DirEntry) (fs.FileInfo, error) {
 	if de.Type()&os.ModeSymlink == 0 {
 		return de.Info()

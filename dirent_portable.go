@@ -26,13 +26,13 @@ func (d *portableDirent) Stat() (fs.FileInfo, error) {
 	return stat.FileInfo, stat.err
 }
 
-func newDirEntry(dirName string, info fs.DirEntry) fs.DirEntry {
+func newDirEntry(dirName string, info fs.DirEntry) DirEntry {
 	return &portableDirent{
 		DirEntry: info,
 		path:     dirName + string(os.PathSeparator) + info.Name(),
 	}
 }
 
-func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
+func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
 	return newDirEntry(dirname, fs.FileInfoToDirEntry(fi))
 }

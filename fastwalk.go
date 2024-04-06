@@ -93,6 +93,16 @@ var DefaultConfig = Config{
 	NumWorkers: DefaultNumWorkers(),
 }
 
+type SortMode uint8
+
+const (
+	// SortNone
+	SortNone SortMode = iota
+	SortFilesFirst
+	SortDirsFirst
+	SortLexical
+)
+
 type Config struct {
 	// TODO: do we want to pass a sentinel error to WalkFunc if
 	// a symlink loop is detected?
@@ -108,10 +118,11 @@ type Config struct {
 	Follow bool
 
 	// Sort files in lexical order before walking. Regular files are visited
-	// before all other files making the walk a bit more breadth-first and
-	// making the output a bit cleaner when, for example, printing. This is
-	// because we serially process directory entries, but process directories
-	// in parallel.
+	// before all other files making the walk a bit more breadth-first and the
+	// output a bit cleaner when, for example, printing. This is because we
+	// serially process directory entries, but process directories in parallel.
+	//
+	// The order that files are visited is not deterministic.
 	//
 	// The order that files are visited is deterministic only at the directory
 	// level, but not generally deterministic because we process directories
@@ -159,25 +170,46 @@ type DirEntry interface {
 // system call, avoiding the need to stat each file individually.
 // fastwalk_unix.go contains a fork of the syscall routines.
 //
-// See golang.org/issue/16399
+// See golang.org/issue/16399 (TODO: remove this)
 //
 // Walk walks the file tree rooted at root, calling walkFn for each file or
 // directory in the tree, including root.
 //
-// If walkFn returns filepath.SkipDir, the directory is skipped.
+// TODO: describe how we walk files/dirs
+//
+// If walkFn returns [SkipDir], the directory is skipped. If walkFn returns
+// [ErrSkipFiles], the callback will not be called for any other files in
+// the current directory.
 //
 // Unlike filepath.WalkDir:
+//
 //   - File stat calls must be done by the user and should be done via
 //     the DirEntry argument to walkFn since it caches the results of
 //     Stat and Lstat.
-//   - The fs.DirEntry argument is always a fastwalk.DirEntry, which has
-//     a Stat() method that returns the result of calling os.Stat() on the
-//     file. The result of Stat() may be cached.
+//
+//   - The fs.DirEntry argument is always a [fastwalk.DirEntry], which has
+//     a Stat() method that returns the result of calling [os.Stat] on the
+//     file. The result of Stat() and Info() may be cached.
+//     The [StatDirEntry] helper can be used to call Stat() on the returned
+//     fastwalk.DirEntry.
+//
+//   - Walk can safely follow symbolic links with the Config.Follow FINISH ME
+//
 //   - Multiple goroutines stat the filesystem concurrently. The provided
 //     walkFn must be safe for concurrent use.
-//   - Walk can follow symlinks if walkFn returns the ErrTraverseLink
+//
+//   - Walk can follow symlinks if walkFn returns the [ErrTraverseLink]
 //     sentinel error. It is the walkFn's responsibility to prevent
 //     Walk from going into symlink cycles.
+//
+//   - Walk can follow symlinks in two ways: the fist, and simplest, is to
+//     set Config.Follow to true - this will cause Walk to follow symlinks
+//     and detect/ignore any symlink loops; the second, is for walkFn returns the [ErrTraverseLink]
+//
+// if walkFn returns the [ErrTraverseLink]
+//
+//	sentinel error. It is the walkFn's responsibility to prevent
+//	Walk from going into symlink cycles.
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	if conf == nil {
 		dupe := DefaultConfig
@@ -297,7 +329,7 @@ type walker struct {
 
 type walkItem struct {
 	dir          string
-	info         fs.DirEntry
+	info         DirEntry
 	callbackDone bool // callback already called; don't do it again
 }
 
@@ -354,7 +386,7 @@ func joinPaths(dir, base string) string {
 	return dir + string(os.PathSeparator) + base
 }
 
-func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
+func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
 	joined := joinPaths(dirName, baseName)
 	typ := de.Type()
 	if typ == os.ModeDir {
