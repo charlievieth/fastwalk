@@ -1,7 +1,4 @@
-//go:build (aix || darwin || dragonfly || freebsd || (js && wasm) || linux || netbsd || openbsd) && !appengine && !solaris
-// +build aix darwin dragonfly freebsd js,wasm linux netbsd openbsd
-// +build !appengine
-// +build !solaris
+//go:build darwin || aix || dragonfly || freebsd || (js && wasm) || linux || netbsd || openbsd || solaris
 
 package fastwalk
 

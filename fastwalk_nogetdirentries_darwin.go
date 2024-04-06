@@ -1,5 +1,4 @@
-//go:build darwin && go1.13 && !appengine && nogetdirentries
-// +build darwin,go1.13,!appengine,nogetdirentries
+//go:build darwin && go1.13 && nogetdirentries
 
 package fastwalk
 

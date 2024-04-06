@@ -1,5 +1,4 @@
-//go:build darwin && go1.13 && !appengine
-// +build darwin,go1.13,!appengine
+//go:build darwin && go1.13
 
 package fastwalk
 
