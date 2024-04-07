@@ -8,19 +8,19 @@ import (
 	"unsafe"
 )
 
-func direntIno(buf []byte) (uint64, bool) {
+func DirentIno(buf []byte) (uint64, bool) {
 	return readInt(buf, unsafe.Offsetof(syscall.Dirent{}.Fileno), unsafe.Sizeof(syscall.Dirent{}.Fileno))
 }
 
-func direntReclen(buf []byte) (uint64, bool) {
+func DirentReclen(buf []byte) (uint64, bool) {
 	return readInt(buf, unsafe.Offsetof(syscall.Dirent{}.Reclen), unsafe.Sizeof(syscall.Dirent{}.Reclen))
 }
 
-func direntNamlen(buf []byte) (uint64, bool) {
+func DirentNamlen(buf []byte) (uint64, bool) {
 	return readInt(buf, unsafe.Offsetof(syscall.Dirent{}.Namlen), unsafe.Sizeof(syscall.Dirent{}.Namlen))
 }
 
-func direntType(buf []byte) os.FileMode {
+func DirentType(buf []byte) os.FileMode {
 	off := unsafe.Offsetof(syscall.Dirent{}.Type)
 	if off >= uintptr(len(buf)) {
 		return ^os.FileMode(0) // unknown
