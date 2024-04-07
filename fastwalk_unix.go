@@ -9,17 +9,22 @@ package fastwalk
 import (
 	"io/fs"
 	"os"
+	"sync"
 	"syscall"
+	"unsafe"
 
 	"github.com/charlievieth/fastwalk/internal/dirent"
 )
 
-// More than 5760 to work around https://golang.org/issue/24015.
-const blockSize = 8192
+// Empirical testing shows that 32k is the ideal buffer size.
+const direntBufSize = 32 * 1024
 
-// unknownFileMode is a sentinel (and bogus) os.FileMode
-// value used to represent a syscall.DT_UNKNOWN Dirent.Type.
-const unknownFileMode os.FileMode = os.ModeNamedPipe | os.ModeSocket | os.ModeDevice
+var direntBufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, direntBufSize)
+		return &b
+	},
+}
 
 func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
 	fd, err := open(dirName, 0, 0)
@@ -28,52 +33,54 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 	}
 	defer syscall.Close(fd)
 
-	// The buffer must be at least a block long.
-	buf := make([]byte, blockSize) // stack-allocated; doesn't escape
-	bufp := 0                      // starting read position in buf
-	nbuf := 0                      // end valid data in buf
+	pb := direntBufPool.Get().(*[]byte)
+	defer direntBufPool.Put(pb)
+	bbuf := *pb
+
 	skipFiles := false
 	for {
-		if bufp >= nbuf {
-			bufp = 0
-			nbuf, err = readDirent(fd, buf)
-			if err != nil {
-				return os.NewSyscallError("readdirent", err)
-			}
-			if nbuf <= 0 {
+		n, err := readDirent(fd, bbuf)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return nil
+		}
+		buf := bbuf[:n:n]
+
+		for len(buf) > 0 {
+			reclen, ok := dirent.DirentReclen(buf)
+			if !ok || reclen > uint64(len(buf)) {
 				return nil
 			}
-		}
-		consumed, name, typ := dirent.Parse(buf[bufp:nbuf])
-		bufp += consumed
-
-		if name == "" || name == "." || name == ".." {
-			continue
-		}
-		// Fallback for filesystems (like old XFS) that don't
-		// support Dirent.Type and have DT_UNKNOWN (0) there
-		// instead.
-		if typ == unknownFileMode {
-			fi, err := os.Lstat(dirName + "/" + name)
-			if err != nil {
-				// It got deleted in the meantime.
-				if os.IsNotExist(err) {
-					continue
-				}
-				return err
-			}
-			typ = fi.Mode() & os.ModeType
-		}
-		if skipFiles && typ.IsRegular() {
-			continue
-		}
-		de := newUnixDirent(dirName, name, typ)
-		if err := fn(dirName, name, de); err != nil {
-			if err == ErrSkipFiles {
-				skipFiles = true
+			rec := buf[:reclen]
+			buf = buf[reclen:]
+			typ := dirent.DirentType(rec)
+			if skipFiles && typ.IsRegular() {
 				continue
 			}
-			return err
+			const namoff = uint64(unsafe.Offsetof(syscall.Dirent{}.Name))
+			namlen, ok := dirent.DirentNamlen(rec)
+			if !ok || namoff+namlen > uint64(len(rec)) {
+				break
+			}
+			name := rec[namoff : namoff+namlen]
+			for i, c := range name {
+				if c == 0 {
+					name = name[:i]
+					break
+				}
+			}
+			if string(name) == "." || string(name) == ".." {
+				continue
+			}
+			nm := string(name)
+			if err := fn(dirName, nm, newUnixDirent(dirName, nm, typ)); err != nil {
+				if err != ErrSkipFiles {
+					return err
+				}
+				skipFiles = true
+			}
 		}
 	}
 }

@@ -1,4 +1,4 @@
-//go:build freebsd
+//go:build darwin
 
 package dirent
 
@@ -9,7 +9,7 @@ import (
 )
 
 func DirentIno(buf []byte) (uint64, bool) {
-	return readInt(buf, unsafe.Offsetof(syscall.Dirent{}.Fileno), unsafe.Sizeof(syscall.Dirent{}.Fileno))
+	return readInt(buf, unsafe.Offsetof(syscall.Dirent{}.Ino), unsafe.Sizeof(syscall.Dirent{}.Ino))
 }
 
 func DirentReclen(buf []byte) (uint64, bool) {
@@ -42,5 +42,5 @@ func DirentType(buf []byte) os.FileMode {
 	case syscall.DT_SOCK:
 		return os.ModeSocket
 	}
-	return ^os.FileMode(0) // unknown
+	return ^os.FileMode(0)
 }
