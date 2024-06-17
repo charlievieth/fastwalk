@@ -19,7 +19,7 @@ const blockSize = 8192
 
 // unknownFileMode is a sentinel (and bogus) os.FileMode
 // value used to represent a syscall.DT_UNKNOWN Dirent.Type.
-const unknownFileMode os.FileMode = os.ModeNamedPipe | os.ModeSocket | os.ModeDevice
+const unknownFileMode os.FileMode = ^os.FileMode(0)
 
 func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
 	fd, err := open(dirName, 0, 0)
