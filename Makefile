@@ -1,3 +1,6 @@
+.PHONY: all
+all: test test_build
+
 .PHONY: test_build_darwin_arm64
 test_build_darwin_arm64:
 	GOOS=darwin GOARCH=arm64 go test -c -o /dev/null
@@ -77,9 +80,6 @@ test_build: \
 .PHONY: test
 test: # runs all tests against the package with race detection and coverage percentage
 	@go test -race -cover ./...
-ifeq "$(shell go env GOOS)" "darwin"
-	@go test -tags nogetdirentries -race -cover ./...
-endif
 
 .PHONY: quick
 quick: # runs all tests without coverage or the race detector
@@ -87,11 +87,13 @@ quick: # runs all tests without coverage or the race detector
 
 .PHONY: bench
 bench:
-	@go test -run '^$' -bench . -benchmem ./...
+	go test -run '^$$' -bench . -benchmem ./...
 
 .PHONY: bench_comp
 bench_comp:
 	@go run ./scripts/bench_comp.go
 
-.PHONY: all
-all: test test_build
+.PHONY: clean
+clean:
+	@go clean
+

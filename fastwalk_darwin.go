@@ -1,4 +1,4 @@
-//go:build darwin && go1.13 && nogetdirentries
+//go:build darwin && go1.13
 
 package fastwalk
 

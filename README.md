@@ -191,28 +191,3 @@ time/op       87.4ms ± 1%    14.6ms ± 1%    -83.34%
 alloc/op      6.14MB ± 0%    6.76MB ± 0%    +10.24%
 allocs/op     100k ± 0%      90k ± 0%       -9.59%
 ```
-
-## Darwin: getdirentries64
-
-The `nogetdirentries` build tag can be used to prevent `fastwalk` from using
-and linking to the non-public `__getdirentries64` syscall. This is required
-if an app using `fastwalk` is to be distributed via Apple's App Store (see
-https://github.com/golang/go/issues/30933 for more details). When using
-`__getdirentries64` is disabled, `fastwalk` will use `readdir_r` instead,
-which is what the Go standard library uses for
-[`os.ReadDir`](https://pkg.go.dev/os#ReadDir) and is about \~10% slower than
-`__getdirentries64`
-([benchmarks](https://github.com/charlievieth/fastwalk/blob/2e6a1b8a1ce88e578279e6e631b2129f7144ec87/fastwalk_darwin_test.go#L19-L57)).
-
-Example of how to build and test that your program is not linked to `__getdirentries64`:
-```sh
-# NOTE: the following only applies to darwin (aka macOS)
-
-# Build binary that imports fastwalk without linking to __getdirentries64.
-$ go build -tags nogetdirentries -o YOUR_BINARY
-# Test that __getdirentries64 is not linked (this should print no output).
-$ ! otool -dyld_info YOUR_BINARY | grep -F getdirentries64
-```
-
-There is a also a script [scripts/links2getdirentries.bash](scripts/links2getdirentries.bash)
-that can be used to check if a program binary links to getdirentries.
