@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"unsafe"
 )
 
@@ -36,6 +37,9 @@ func loadFileInfo(pinfo **fileInfo) *fileInfo {
 // If fs.DirEntry de is a fastwalk.DirEntry it's Stat() method is used and the
 // returned fs.FileInfo may be a previously cached result.
 func StatDirEntry(path string, de fs.DirEntry) (fs.FileInfo, error) {
+	if de == nil {
+		return nil, &os.PathError{Op: "stat", Path: path, Err: syscall.EINVAL}
+	}
 	if de.Type()&os.ModeSymlink == 0 {
 		return de.Info()
 	}
