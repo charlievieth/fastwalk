@@ -321,6 +321,9 @@ func maxPathLength(t testing.TB) (root string, pathMax int) {
 // Test that we can handle PATH_MAX. This is mostly for the Unix tests
 // where we pass a buffer to ReadDirect (often getdents64(2)).
 func TestFastWalk_LongPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test not needed on Windows")
+	}
 	root, pathMax := maxPathLength(t)
 	t.Log("PATH_MAX:", pathMax)
 

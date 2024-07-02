@@ -1,4 +1,4 @@
-name: Test fastwalk on Windows
+name: Test fastwalk on macOS arm64
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: macos-latest
     strategy:
       matrix:
         go: [1.21, 1.22]
@@ -20,5 +20,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go }}
+    - name: Test
+      run: go test ./...
     - name: Test Race
       run: go test -race ./...
