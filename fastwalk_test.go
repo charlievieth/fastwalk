@@ -241,6 +241,137 @@ func TestFastWalk_LongFileName(t *testing.T) {
 	)
 }
 
+func maxPathLength(t testing.TB) (root string, pathMax int) {
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch len(tmp) % 4 {
+	case 0:
+	case 1:
+		// Can't just add 1 "/" so add 5 ("/aaaa")
+		tmp = filepath.Join(tmp, "/aaaa")
+	case 2:
+		tmp = filepath.Join(tmp, "/a")
+	case 3:
+		tmp = filepath.Join(tmp, "/aa")
+	}
+	base := tmp
+
+	// Returns if n is an invalid file name length
+	var longestPath string
+	invalidPathLength := func(n int) bool {
+		m := n - len(tmp)
+		if m <= 0 {
+			return false
+		}
+		var w strings.Builder
+		w.Grow(n + 1)
+		w.WriteString(base)
+		for w.Len() < n-32 {
+			w.WriteString("/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		}
+		for w.Len() < n {
+			w.WriteByte('b')
+		}
+		path := w.String()
+		if len(path) != n {
+			t.Fatalf("invalid PATH length: %d want: %d", len(path), n)
+		}
+		err := os.MkdirAll(path, 0755)
+		if err == nil {
+			// Don't remove directories on success since it's slow
+			// and we'll use them again as the path length increases.
+			longestPath = path
+		}
+		return err != nil
+	}
+
+	// Use a binary search to find the max path length (+1)
+	n := sort.Search(16*1024, invalidPathLength)
+	if n <= 1 {
+		t.Fatal("Failed to find the max path length:", n)
+	}
+	pathMax = n - 1
+	if invalidPathLength(pathMax) {
+		t.Fatal("Failed to find the max path length:", n)
+	}
+	// Make sure longestPath exists
+	if _, err := os.Stat(longestPath); err != nil {
+		t.Fatalf("Invalid longest path (%q): %v", longestPath, err)
+	}
+
+	// Create directories under the tmp/root dir: /{TMP}/{b..z}/{LONGEST_PATH}
+	root = filepath.Dir(tmp)
+	name := filepath.Base(tmp)
+	long := strings.TrimPrefix(longestPath, tmp)
+	end := 'z'
+	if testing.Short() {
+		end = 'e'
+	}
+	for r := 'b'; r <= end; r++ {
+		newBase := strings.Repeat(string(r), len(name))
+		if err := os.MkdirAll(filepath.Join(root, newBase, long), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root, pathMax
+}
+
+// Test that we can handle PATH_MAX. This is mostly for the Unix tests
+// where we pass a buffer to ReadDirect (often getdents64(2)).
+func TestFastWalk_LongPath(t *testing.T) {
+	root, pathMax := maxPathLength(t)
+	t.Log("PATH_MAX:", pathMax)
+
+	var want []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		want = append(want, filepath.Clean(path))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	var mu sync.Mutex
+	err = fastwalk.Walk(nil, root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		mu.Lock()
+		got = append(got, filepath.Clean(path))
+		mu.Unlock()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sort.Strings(want)
+	sort.Strings(got)
+
+	if !reflect.DeepEqual(want, got) {
+		// Don't print the delta here since it might be very large. Instead
+		// write it to two temp files in a directory that is not removed on
+		// test exit so that the user can compare them themselves.
+		tempdir, err := os.MkdirTemp("", "test-fast-walk")
+		if err != nil {
+			t.Error(err)
+		}
+		if err := writeFile(tempdir+"/want.txt", strings.Join(want, "\n"), 0666); err != nil {
+			t.Error(err)
+		}
+		if err := writeFile(tempdir+"/got.txt", strings.Join(got, "\n"), 0666); err != nil {
+			t.Error(err)
+		}
+		t.Fatalf("Output does not match: see the files in: %q", tempdir)
+	}
+}
+
 func TestFastWalk_Symlink(t *testing.T) {
 	testFastWalk(t, map[string]string{
 		"foo/foo.go":       "one",
