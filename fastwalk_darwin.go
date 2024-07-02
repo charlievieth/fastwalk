@@ -12,8 +12,14 @@ import (
 //sys	closedir(dir uintptr) (err error)
 //sys	readdir_r(dir uintptr, entry *Dirent, result **Dirent) (res Errno)
 
-func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
-	fd, err := opendir(dirName)
+func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) (err error) {
+	var fd uintptr
+	for {
+		fd, err = opendir(dirName)
+		if err != syscall.EINTR {
+			break
+		}
+	}
 	if err != nil {
 		return &os.PathError{Op: "opendir", Path: dirName, Err: err}
 	}
@@ -32,6 +38,15 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 		if entptr == nil { // EOF
 			break
 		}
+		// Darwin may return a zero inode when a directory entry has been
+		// deleted but not yet removed from the directory. The man page for
+		// getdirentries(2) states that programs are responsible for skipping
+		// those entries:
+		//
+		//   Users of getdirentries() should skip entries with d_fileno = 0,
+		//   as such entries represent files which have been deleted but not
+		//   yet removed from the directory entry.
+		//
 		if dirent.Ino == 0 {
 			continue
 		}

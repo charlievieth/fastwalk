@@ -1,12 +1,16 @@
-//go:build darwin && go1.12
-// +build darwin,go1.12
+//go:build darwin && go1.13
+// +build darwin,go1.13
 
 package fastwalk
 
 import (
+	"strings"
 	"syscall"
 	"unsafe"
 )
+
+// TODO: consider using "go linkname" for everything but "opendir" which is not
+// implemented in the stdlib
 
 // Implemented in the runtime package (runtime/sys_darwin.go)
 func syscall_syscall(fn, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
@@ -39,11 +43,17 @@ var libc_readdir_r_trampoline_addr uintptr
 func opendir(path string) (dir uintptr, err error) {
 	// We implent opendir so that we don't have to open a file, duplicate
 	// it's FD, then call fdopendir with it.
-	p, err := syscall.BytePtrFromString(path)
-	if err != nil {
-		return 0, err
+
+	var buf [1024]byte // Tested by TestFastWalk_LongPath
+	if len(path) >= len(buf) {
+		return 0, errEINVAL
 	}
-	r0, _, e1 := syscall_syscallPtr(libc_opendir_trampoline_addr, uintptr(unsafe.Pointer(p)), 0, 0)
+	if strings.IndexByte(path, 0) != -1 {
+		return 0, errEINVAL
+	}
+	copy(buf[:], path)
+	buf[len(path)] = 0
+	r0, _, e1 := syscall_syscallPtr(libc_opendir_trampoline_addr, uintptr(unsafe.Pointer(&buf[0])), 0, 0)
 	if e1 != 0 {
 		err = errnoErr(e1)
 	}
