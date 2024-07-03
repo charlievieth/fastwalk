@@ -37,7 +37,6 @@ package fastwalk
  */
 
 import (
-	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -88,66 +87,36 @@ func DefaultNumWorkers() int {
 	return numCPU
 }
 
-var underWSL struct {
-	once sync.Once
-	wsl  bool
-}
-
-// runningUnderWSL returns if we're a Widows executable running in WSL.
-// See [DefaultToSlash] for an explanation of the heuristics used here.
-func runningUnderWSL() bool {
-	if runtime.GOOS != "windows" {
-		return false
-	}
-	w := &underWSL
-	w.once.Do(func() {
-		w.wsl = func() bool {
-			// Best check (but not super fast)
-			if _, err := os.Lstat("/proc/sys/fs/binfmt_misc/WSLInterop"); err == nil {
-				return true
-			}
-			// Fast check, but could provide a false positive if the user sets
-			// this on the Windows side.
-			if os.Getenv("WSL_DISTRO_NAME") != "" {
-				return true
-			}
-			// If the binary is compiled for Windows and we're running under Linux
-			// then honestly just the presence of "/proc/version" should be enough
-			// to determine that we're running under WSL, but check the version
-			// string just to be pedantic.
-			data, _ := os.ReadFile("/proc/version")
-			return bytes.Contains(data, []byte("microsoft")) ||
-				bytes.Contains(data, []byte("Microsoft"))
-		}()
-	})
-	return w.wsl
-}
-
-// DefaultToSlash returns the default ToSlash value used by the global config
-// and only applies to Windows. For any other OS this function is a no-op.
+// DefaultToSlash returns true if this is a Go program compiled for Windows
+// running in an environment ([WSL] or [MSYS/MSYS2]) that uses forward slashes
+// as the path separator instead of the native backslash.
+// On all other platforms this is a no-op and returns false since the native
+// path separator is a forward slash and does not need to be converted.
 //
-// On Windows, this function attempts to detect if this is a Go program compiled
-// for Windows but running in the Windows Subsystem for Linux (WSL). In this
-// case, we want to use a forward-slash as the separator instead of a backslash
-// since tools like FZF may directly send paths to the terminal/shell (which
-// being a *nix shell will treat backslashes as the start of an escape sequence).
+// This check does not apply to programs compiled in [WSL] [MSYS/MSYS2] or for
+// Linux (GOOS=linux). It only applies to Go programs compiled for Windows
+// (GOOS=windows) that are executed from [WSL] or [MSYS/MSYS2].
 //
-// This does not apply to programs compiled in WSL for Linux. It only applies to
-// Go programs compiled for Windows (.exe) that are executed from WSL. On all
-// other platforms it is a no-op.
+// To detect if we're running in [MSYS/MSYS2] we check that "MSYSTEM" environment
+// variable is either "MINGW64", "MINGW32", or "MSYS".
 //
-// The following heuristics are used to detect if we're a Windows executable
-// running in WSL (NOTE: if [runtime.GOOS] != "windows" this a no-op and returns
-// false):
+// The following heuristics are used to detect if we're running in [WSL]:
 //
 //   - Existence of "/proc/sys/fs/binfmt_misc/WSLInterop".
 //   - If the "WSL_DISTRO_NAME" environment variable is set.
 //   - If "/proc/version" contains either "Microsoft" or "microsoft".
 //
-// Additionally, the result of this function is cached the cached value will be
-// returned on all subsequent calls.
+// The result of the WSL check is cached for performance reasons.
+//
+// See: https://github.com/junegunn/fzf/issues/3859
+//
+// [WSL]: https://learn.microsoft.com/en-us/windows/wsl/about
+// [MSYS/MSYS2]: https://www.msys2.org/
 func DefaultToSlash() bool {
-	return runtime.GOOS == "windows" && runningUnderWSL()
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	return useForwardSlash()
 }
 
 // DefaultConfig is the default Config used when none is supplied.
@@ -269,7 +238,7 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		resc: make(chan error, numWorkers),
 
 		follow:  conf.Follow,
-		ToSlash: conf.ToSlash,
+		toSlash: conf.ToSlash,
 	}
 	if w.follow {
 		w.ignoredDirs = append(w.ignoredDirs, fi)
@@ -350,7 +319,7 @@ type walker struct {
 
 	ignoredDirs []os.FileInfo
 	follow      bool
-	ToSlash     bool
+	toSlash     bool
 }
 
 type walkItem struct {
@@ -412,7 +381,7 @@ func (w *walker) joinPaths(dir, base string) string {
 		}
 		return dir + "/" + base
 	}
-	if w.ToSlash {
+	if w.toSlash {
 		return dir + "/" + base
 	}
 	return dir + string(os.PathSeparator) + base
