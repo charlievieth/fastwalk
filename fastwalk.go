@@ -37,6 +37,7 @@ package fastwalk
  */
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -60,7 +61,7 @@ var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 var SkipDir = fs.SkipDir
 
 // DefaultNumWorkers returns the default number of worker goroutines to use in
-// fastwalk.Walk and is the value of runtime.GOMAXPROCS(-1) clamped to a range
+// [fastwalk.Walk] and is the value of [runtime.GOMAXPROCS](-1) clamped to a range
 // of 4 to 32 except on Darwin where it is either 4 (8 cores or less) or 6
 // (more than 8 cores). This is because Walk / IO performance on Darwin
 // degrades with more concurrency.
@@ -87,9 +88,64 @@ func DefaultNumWorkers() int {
 	return numCPU
 }
 
+// runningUnderWSL returns if we're a Widows executable running in WSL.
+// See [DefaultToSlash] for an explanation of the heuristics used here.
+var runningUnderWSL = sync.OnceValue(func() bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	// Best check (but not super fast)
+	if _, err := os.Lstat("/proc/sys/fs/binfmt_misc/WSLInterop"); err == nil {
+		return true
+	}
+	// Fast check, but could provide a false positive if the user sets
+	// this on the Windows side.
+	if os.Getenv("WSL_DISTRO_NAME") != "" {
+		return true
+	}
+	// If the binary is compiled for Windows and we're running under Linux
+	// then honestly just the presence of "/proc/version" should be enough
+	// to determine that we're running under WSL, but check the version
+	// string just to be pedantic.
+	data, _ := os.ReadFile("/proc/version")
+	return bytes.Contains(data, []byte("microsoft")) ||
+		bytes.Contains(data, []byte("Microsoft"))
+})
+
+// DefaultToSlash returns the default ToSlash value used by the global config
+// and only applies to Windows. For any other OS this function is a no-op.
+//
+// On Windows, this function attempts to detect if this is a Go program compiled
+// for Windows but running in the Windows Subsystem for Linux (WSL). In this
+// case, we want to use a forward-slash as the separator instead of a backslash
+// since tools like FZF may directly send paths to the terminal/shell (which
+// being a *nix shell will treat backslashes as the start of an escape sequence).
+//
+// This does not apply to programs compiled in WSL for Linux. It only applies to
+// Go programs compiled for Windows (.exe) that are executed from WSL. On all
+// other platforms it is a no-op.
+//
+// The following heuristics are used to detect if we're a Windows executable
+// running in WSL (NOTE: if [runtime.GOOS] != "windows" this a no-op and returns
+// false):
+//
+//   - Existence of "/proc/sys/fs/binfmt_misc/WSLInterop".
+//   - If the "WSL_DISTRO_NAME" environment variable is set.
+//   - If "/proc/version" contains either "Microsoft" or "microsoft".
+//
+// Additionally, the result of this function is cached the cached value will be
+// returned on all subsequent calls.
+func DefaultToSlash() bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	return runningUnderWSL()
+}
+
 // DefaultConfig is the default Config used when none is supplied.
 var DefaultConfig = Config{
 	Follow:     false,
+	ToSlash:    DefaultToSlash(),
 	NumWorkers: DefaultNumWorkers(),
 }
 
@@ -107,8 +163,22 @@ type Config struct {
 	// respected.
 	Follow bool
 
+	// Join all paths using a forward slash "/" instead of the system
+	// default (the root path will be converted with filepath.ToSlash).
+	// This option exists for users on Windows Subsystem for Linux (WSL)
+	// that are running a Windows executable (like FZF) in WSL and need
+	// forward slashes for compatibility (since binary was compiled for
+	// Windows the path separator will be "\" which can cause issues in
+	// in a Unix shell).
+	//
+	// This option has no effect when the OS path separator is a
+	// forward slash "/".
+	//
+	// See FZF issue: https://github.com/junegunn/fzf/issues/3859
+	ToSlash bool
+
 	// Number of parallel workers to use. If NumWorkers if ≤ 0 then
-	// the greater of runtime.NumCPU() or 4 is used.
+	// [DefaultNumWorkers] is used.
 	NumWorkers int
 }
 
@@ -166,6 +236,9 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		dupe := DefaultConfig
 		conf = &dupe
 	}
+	if conf.ToSlash {
+		root = filepath.ToSlash(root)
+	}
 
 	// Make sure to wait for all workers to finish, otherwise
 	// walkFn could still be called after returning. This Wait call
@@ -187,7 +260,8 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		// buffered for correctness & not leaking goroutines:
 		resc: make(chan error, numWorkers),
 
-		follow: conf.Follow,
+		follow:  conf.Follow,
+		ToSlash: conf.ToSlash,
 	}
 	if w.follow {
 		w.ignoredDirs = append(w.ignoredDirs, fi)
@@ -268,6 +342,7 @@ type walker struct {
 
 	ignoredDirs []os.FileInfo
 	follow      bool
+	ToSlash     bool
 }
 
 type walkItem struct {
@@ -320,17 +395,23 @@ func (w *walker) shouldTraverse(path string, de fs.DirEntry) bool {
 	}
 }
 
-func joinPaths(dir, base string) string {
+func (w *walker) joinPaths(dir, base string) string {
 	// Handle the case where the root path argument to Walk is "/"
 	// without this the returned path is prefixed with "//".
-	if os.PathSeparator == '/' && dir == "/" {
-		return dir + base
+	if os.PathSeparator == '/' {
+		if dir == "/" {
+			return dir + base
+		}
+		return dir + "/" + base
+	}
+	if w.ToSlash {
+		return dir + "/" + base
 	}
 	return dir + string(os.PathSeparator) + base
 }
 
 func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
-	joined := joinPaths(dirName, baseName)
+	joined := w.joinPaths(dirName, baseName)
 	typ := de.Type()
 	if typ == os.ModeDir {
 		w.enqueue(walkItem{dir: joined, info: de})

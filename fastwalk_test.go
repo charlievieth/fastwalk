@@ -790,6 +790,43 @@ func TestFastWalk_ErrPermission(t *testing.T) {
 	}
 }
 
+func TestFastWalk_ToSlash(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("test only supported on Windows")
+	}
+
+	abs, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.ToSlash(abs)
+
+	conf := fastwalk.Config{
+		ToSlash: true,
+	}
+	var count atomic.Int32
+	err = fastwalk.Walk(&conf, root, func(path string, de fs.DirEntry, err error) error {
+		requireNoError(t, err)
+		if strings.Contains(path, `\`) {
+			t.Errorf("found non-forward slash separator in path: %q", path)
+		}
+		if _, err := de.Info(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := de.(fastwalk.DirEntry).Stat(); err != nil {
+			t.Fatal(err)
+		}
+		count.Add(1)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count.Load() == 0 {
+		t.Fatal("did not walk any files")
+	}
+}
+
 func diffFileModes(t *testing.T, got, want map[string]os.FileMode) {
 	type Mode struct {
 		Name string
