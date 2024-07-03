@@ -1,3 +1,10 @@
+# vim: ts=4 sw=4 ft=make
+
+MAKEFILE_PATH := $(realpath $(lastword $(MAKEFILE_LIST)))
+MAKEFILE_DIR  := $(abspath $(dir $(MAKEFILE_PATH)))
+
+GOBIN = $(MAKEFILE_DIR)/bin
+
 .PHONY: all
 all: test test_build
 
@@ -85,6 +92,26 @@ test: # runs all tests against the package with race detection and coverage perc
 quick: # runs all tests without coverage or the race detector
 	@go test ./...
 
+bin/nilaway:
+	@mkdir -p $(MAKEFILE_DIR)/bin
+	@GOBIN=$(GOBIN) go install go.uber.org/nilaway/cmd/nilaway@latest
+
+.PHONY: nilaway
+nilaway: bin/nilaway
+	@$(GOBIN)/nilaway -test=false ./...
+
+.PHONY: nilaway
+nilaway_tests: bin/nilaway
+	@$(GOBIN)/nilaway -test=true ./...
+
+bin/golangci-lint:
+	@mkdir -p $(GOBIN)
+	@GOBIN=$(GOBIN) go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+.PHONY: golangci-lint
+golangci-lint: bin/golangci-lint
+	@$(GOBIN)/golangci-lint run ./...
+
 .PHONY: bench
 bench:
 	go test -run '^$$' -bench . -benchmem ./...
@@ -95,5 +122,6 @@ bench_comp:
 
 .PHONY: clean
 clean:
+	@rm -rf $(MAKEFILE_DIR)/bin
 	@go clean
 
