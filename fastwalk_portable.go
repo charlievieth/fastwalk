@@ -3,7 +3,6 @@
 package fastwalk
 
 import (
-	"io/fs"
 	"os"
 )
 
@@ -11,7 +10,7 @@ import (
 // It does not descend into directories or follow symlinks.
 // If fn returns a non-nil error, readDir returns with that error
 // immediately.
-func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
+func (w *walker) readDir(dirName string) error {
 	f, err := os.Open(dirName)
 	if err != nil {
 		return err
@@ -22,6 +21,12 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 		return readErr
 	}
 
+	var p *[]DirEntry
+	if w.sortMode != SortNone {
+		p = direntSlicePool.Get().(*[]DirEntry)
+	}
+	defer putDirentSlice(p)
+
 	var skipFiles bool
 	for _, d := range des {
 		if skipFiles && d.Type().IsRegular() {
@@ -29,13 +34,34 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 		}
 		// Need to use FileMode.Type().Type() for fs.DirEntry
 		e := newDirEntry(dirName, d)
-		if err := fn(dirName, d.Name(), e); err != nil {
+		if w.sortMode == SortNone {
+			if err := w.onDirEnt(dirName, d.Name(), e); err != nil {
+				if err != ErrSkipFiles {
+					return err
+				}
+				skipFiles = true
+			}
+		} else {
+			*p = append(*p, e)
+		}
+	}
+	if w.sortMode == SortNone {
+		return readErr
+	}
+
+	dents := *p
+	sortDirents(w.sortMode, dents)
+	for _, d := range dents {
+		d := d
+		if skipFiles && d.Type().IsRegular() {
+			continue
+		}
+		if err := w.onDirEnt(dirName, d.Name(), d); err != nil {
 			if err != ErrSkipFiles {
 				return err
 			}
 			skipFiles = true
 		}
 	}
-
 	return readErr
 }

@@ -31,11 +31,16 @@ func loadFileInfo(pinfo **fileInfo) *fileInfo {
 	return fi
 }
 
-// StatDirEntry returns the fs.FileInfo for the file or subdirectory described
-// by the entry.  If the entry is a symbolic link, StatDirEntry returns the
-// fs.FileInfo for the file the line references (os.Stat).
-// If fs.DirEntry de is a fastwalk.DirEntry it's Stat() method is used and the
-// returned fs.FileInfo may be a previously cached result.
+// StatDirEntry returns a [fs.FileInfo] describing the named file ([os.Stat]).
+// If de is a [fastwalk.DirEntry] its Stat method is used and the returned
+// FileInfo may be cached from a prior call to Stat. If a cached result is not
+// desired, users should just call [os.Stat] directly.
+//
+// This is a helper function for calling Stat on the DirEntry passed to the
+// walkFn argument to [Walk].
+//
+// The path argument is only used if de is not of type [fastwalk.DirEntry].
+// Therefore, de should be the DirEntry describing path.
 func StatDirEntry(path string, de fs.DirEntry) (fs.FileInfo, error) {
 	if de == nil {
 		return nil, &os.PathError{Op: "stat", Path: path, Err: syscall.EINVAL}

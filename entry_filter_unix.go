@@ -48,7 +48,7 @@ func (e *EntryFilter) seen(dev, ino uint64) (seen bool) {
 
 // TODO: this name is confusing and should be fixed
 
-// Entry returns if path and fs.DirEntry have been seen before.
+// Entry returns if path and [fs.DirEntry] have been seen before.
 func (e *EntryFilter) Entry(path string, de fs.DirEntry) (seen bool) {
 	fi, err := StatDirEntry(path, de)
 	if err != nil {

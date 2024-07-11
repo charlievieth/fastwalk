@@ -44,7 +44,9 @@ func opendir(path string) (dir uintptr, err error) {
 	// We implent opendir so that we don't have to open a file, duplicate
 	// it's FD, then call fdopendir with it.
 
-	var buf [1024]byte // Tested by TestFastWalk_LongPath
+	const maxPath = len(syscall.Dirent{}.Name) // Tested by TestFastWalk_LongPath
+
+	var buf [maxPath]byte
 	if len(path) >= len(buf) {
 		return 0, errEINVAL
 	}

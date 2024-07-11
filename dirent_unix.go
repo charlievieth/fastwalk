@@ -5,19 +5,23 @@ package fastwalk
 import (
 	"io/fs"
 	"os"
+	"slices"
+	"strings"
+	"sync"
 )
 
 type unixDirent struct {
 	parent string
 	name   string
-	typ    os.FileMode
+	typ    fs.FileMode
 	info   *fileInfo
 	stat   *fileInfo
 }
 
 func (d *unixDirent) Name() string      { return d.name }
 func (d *unixDirent) IsDir() bool       { return d.typ.IsDir() }
-func (d *unixDirent) Type() os.FileMode { return d.typ }
+func (d *unixDirent) Type() fs.FileMode { return d.typ }
+func (d *unixDirent) String() string    { return fs.FormatDirEntry(d) }
 
 func (d *unixDirent) Info() (fs.FileInfo, error) {
 	info := loadFileInfo(&d.info)
@@ -38,7 +42,7 @@ func (d *unixDirent) Stat() (fs.FileInfo, error) {
 	return stat.FileInfo, stat.err
 }
 
-func newUnixDirent(parent, name string, typ os.FileMode) *unixDirent {
+func newUnixDirent(parent, name string, typ fs.FileMode) *unixDirent {
 	return &unixDirent{
 		parent: parent,
 		name:   name,
@@ -46,7 +50,7 @@ func newUnixDirent(parent, name string, typ os.FileMode) *unixDirent {
 	}
 }
 
-func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
+func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
 	info := &fileInfo{
 		FileInfo: fi,
 	}
@@ -56,5 +60,79 @@ func fileInfoToDirEntry(dirname string, fi fs.FileInfo) fs.DirEntry {
 		name:   fi.Name(),
 		typ:    fi.Mode().Type(),
 		info:   info,
+	}
+}
+
+var direntSlicePool = sync.Pool{
+	New: func() any {
+		a := make([]*unixDirent, 0, 32)
+		return &a
+	},
+}
+
+func putDirentSlice(p *[]*unixDirent) {
+	if p != nil && cap(*p) <= 32*1024 /* 256Kb */ {
+		a := *p
+		for i := range a {
+			a[i] = nil
+		}
+		*p = a[:0]
+		direntSlicePool.Put(p)
+	}
+}
+
+func sortDirents(mode SortMode, dents []*unixDirent) {
+	if len(dents) <= 1 {
+		return
+	}
+	switch mode {
+	case SortLexical:
+		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
+			return strings.Compare(d1.name, d2.name)
+		})
+	case SortFilesFirst:
+		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
+			r1 := d1.typ.IsRegular()
+			r2 := d2.typ.IsRegular()
+			switch {
+			case r1 && !r2:
+				return -1
+			case !r1 && r2:
+				return 1
+			case !r1 && !r2:
+				// Both are not regular files: sort directories last
+				dd1 := d1.typ.IsDir()
+				dd2 := d2.typ.IsDir()
+				switch {
+				case !dd1 && dd2:
+					return -1
+				case dd1 && !dd2:
+					return 1
+				}
+			}
+			return strings.Compare(d1.name, d2.name)
+		})
+	case SortDirsFirst:
+		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
+			dd1 := d1.typ.IsDir()
+			dd2 := d2.typ.IsDir()
+			switch {
+			case dd1 && !dd2:
+				return -1
+			case !dd1 && dd2:
+				return 1
+			case !dd1 && !dd2:
+				// Both are not directories: sort regular files first
+				r1 := d1.typ.IsRegular()
+				r2 := d2.typ.IsRegular()
+				switch {
+				case r1 && !r2:
+					return -1
+				case !r1 && r2:
+					return 1
+				}
+			}
+			return strings.Compare(d1.name, d2.name)
+		})
 	}
 }

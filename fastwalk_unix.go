@@ -7,7 +7,6 @@
 package fastwalk
 
 import (
-	"io/fs"
 	"os"
 	"syscall"
 
@@ -21,12 +20,18 @@ const blockSize = 8192
 // value used to represent a syscall.DT_UNKNOWN Dirent.Type.
 const unknownFileMode os.FileMode = ^os.FileMode(0)
 
-func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) error {
+func (w *walker) readDir(dirName string) error {
 	fd, err := open(dirName, 0, 0)
 	if err != nil {
 		return &os.PathError{Op: "open", Path: dirName, Err: err}
 	}
 	defer syscall.Close(fd)
+
+	var p *[]*unixDirent
+	if w.sortMode != SortNone {
+		p = direntSlicePool.Get().(*[]*unixDirent)
+	}
+	defer putDirentSlice(p)
 
 	// The buffer must be at least a block long.
 	buf := make([]byte, blockSize) // stack-allocated; doesn't escape
@@ -41,7 +46,7 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 				return os.NewSyscallError("readdirent", err)
 			}
 			if nbuf <= 0 {
-				return nil
+				break // exit loop
 			}
 		}
 		consumed, name, typ := dirent.Parse(buf[bufp:nbuf])
@@ -68,14 +73,37 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 			continue
 		}
 		de := newUnixDirent(dirName, name, typ)
-		if err := fn(dirName, name, de); err != nil {
-			if err == ErrSkipFiles {
-				skipFiles = true
-				continue
+		if w.sortMode == SortNone {
+			if err := w.onDirEnt(dirName, name, de); err != nil {
+				if err == ErrSkipFiles {
+					skipFiles = true
+					continue
+				}
+				return err
 			}
-			return err
+		} else {
+			*p = append(*p, de)
 		}
 	}
+	if w.sortMode == SortNone {
+		return nil
+	}
+
+	dents := *p
+	sortDirents(w.sortMode, dents)
+	for _, d := range dents {
+		d := d
+		if skipFiles && d.typ.IsRegular() {
+			continue
+		}
+		if err := w.onDirEnt(dirName, d.Name(), d); err != nil {
+			if err != ErrSkipFiles {
+				return err
+			}
+			skipFiles = true
+		}
+	}
+	return nil
 }
 
 // According to https://golang.org/doc/go1.14#runtime
