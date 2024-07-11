@@ -18,18 +18,17 @@ func isDir(path string, d fs.DirEntry) bool {
 	return false
 }
 
-// IgnoreDuplicateDirs wraps fs.WalkDirFunc walkFn to make it follow symbolic
+// IgnoreDuplicateDirs wraps [fs.WalkDirFunc] walkFn to make it follow symbolic
 // links and ignore duplicate directories (if a symlink points to a directory
 // that has already been traversed it is skipped). The walkFn is called for
 // for skipped directories, but the directory is not traversed (this is
 // required for error handling).
 //
-// The Config.Follow setting has no effect on the behavior of Walk when
+// The Follow [Config] setting has no effect on the behavior of Walk when
 // this wrapper is used.
 //
-// In most use cases, the returned fs.WalkDirFunc should not be reused between
-// in another call to Walk. If it is reused, any previously visited file will
-// be skipped.
+// In most use cases, the returned [fs.WalkDirFunc] should not be reused.
+// If it is reused, any previously visited file will be skipped.
 //
 // NOTE: The order of traversal is undefined. Given an "example" directory
 // like the one below where "dir" is a directory and "smydir1" and "smydir2"
@@ -68,9 +67,8 @@ func IgnoreDuplicateDirs(walkFn fs.WalkDirFunc) fs.WalkDirFunc {
 // files are ignored. If a symlink resolves to a file that has already been
 // visited it will be skipped.
 //
-// In most use cases, the returned fs.WalkDirFunc should not be reused between
-// in another call to Walk. If it is reused, any previously visited file will
-// be skipped.
+// In most use cases, the returned [fs.WalkDirFunc] should not be reused.
+// If it is reused, any previously visited file will be skipped.
 //
 // This can significantly slow Walk as os.Stat() is called for each path
 // (on Windows, os.Stat() is only needed for symlinks).
@@ -92,8 +90,8 @@ func IgnoreDuplicateFiles(walkFn fs.WalkDirFunc) fs.WalkDirFunc {
 	}
 }
 
-// IgnorePermissionErrors wraps walkFn so that permission errors are ignored.
-// The returned fs.WalkDirFunc may be reused.
+// IgnorePermissionErrors wraps walkFn so that [fs.ErrPermission] permission
+// errors are ignored. The returned [fs.WalkDirFunc] may be reused.
 func IgnorePermissionErrors(walkFn fs.WalkDirFunc) fs.WalkDirFunc {
 	return func(path string, d fs.DirEntry, err error) error {
 		if err != nil && os.IsPermission(err) {

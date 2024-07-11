@@ -3,16 +3,12 @@
 package fastwalk
 
 import (
-	"io/fs"
 	"os"
 	"syscall"
 	"unsafe"
 )
 
-//sys	closedir(dir uintptr) (err error)
-//sys	readdir_r(dir uintptr, entry *Dirent, result **Dirent) (res Errno)
-
-func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) error) (err error) {
+func (w *walker) readDir(dirName string) (err error) {
 	var fd uintptr
 	for {
 		fd, err = opendir(dirName)
@@ -24,6 +20,12 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 		return &os.PathError{Op: "opendir", Path: dirName, Err: err}
 	}
 	defer closedir(fd) //nolint:errcheck
+
+	var p *[]*unixDirent
+	if w.sortMode != SortNone {
+		p = direntSlicePool.Get().(*[]*unixDirent)
+	}
+	defer putDirentSlice(p)
 
 	skipFiles := false
 	var dirent syscall.Dirent
@@ -66,14 +68,36 @@ func readDir(dirName string, fn func(dirName, entName string, de fs.DirEntry) er
 			continue
 		}
 		nm := string(name)
-		if err := fn(dirName, nm, newUnixDirent(dirName, nm, typ)); err != nil {
+		de := newUnixDirent(dirName, nm, typ)
+		if w.sortMode == SortNone {
+			if err := w.onDirEnt(dirName, nm, de); err != nil {
+				if err != ErrSkipFiles {
+					return err
+				}
+				skipFiles = true
+			}
+		} else {
+			*p = append(*p, de)
+		}
+	}
+	if w.sortMode == SortNone {
+		return nil
+	}
+
+	dents := *p
+	sortDirents(w.sortMode, dents)
+	for _, d := range dents {
+		d := d
+		if skipFiles && d.typ.IsRegular() {
+			continue
+		}
+		if err := w.onDirEnt(dirName, d.Name(), d); err != nil {
 			if err != ErrSkipFiles {
 				return err
 			}
 			skipFiles = true
 		}
 	}
-
 	return nil
 }
 

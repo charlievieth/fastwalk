@@ -1,5 +1,5 @@
-// Package fastwalk provides a faster version of filepath.Walk for file system
-// scanning tools.
+// Package fastwalk provides a faster version of [filepath.WalkDir] for file
+// system scanning tools.
 package fastwalk
 
 /*
@@ -45,8 +45,9 @@ import (
 	"sync"
 )
 
-// ErrTraverseLink is used as a return value from WalkFuncs to indicate that the
-// symlink named in the call may be traversed.
+// ErrTraverseLink is used as a return value from WalkDirFuncs to indicate that
+// the symlink named in the call may be traversed. This error is ignored if
+// the Follow [Config] option is true.
 var ErrTraverseLink = errors.New("fastwalk: traverse symlink, assuming target is a directory")
 
 // ErrSkipFiles is a used as a return value from WalkFuncs to indicate that the
@@ -59,8 +60,10 @@ var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 // as an error by any function.
 var SkipDir = fs.SkipDir
 
+// TODO: add fs.SkipAll
+
 // DefaultNumWorkers returns the default number of worker goroutines to use in
-// [fastwalk.Walk] and is the value of [runtime.GOMAXPROCS](-1) clamped to a range
+// [Walk] and is the value of [runtime.GOMAXPROCS](-1) clamped to a range
 // of 4 to 32 except on Darwin where it is either 4 (8 cores or less) or 6
 // (more than 8 cores). This is because Walk / IO performance on Darwin
 // degrades with more concurrency.
@@ -143,13 +146,108 @@ func DefaultToSlash() bool {
 	return ok
 }
 
-// DefaultConfig is the default Config used when none is supplied.
+// SortMode determines the order that a directory's entries are visited by
+// [Walk]. Sorting applies only at the directory level and since we process
+// directories in parallel the order in which all files are visited is still
+// non-deterministic.
+//
+// Sorting is mostly useful for programs that print the output of Walk since
+// it makes it slightly more ordered compared to the default directory order.
+// Sorting may also help some programs that wish to change the order in which
+// a directory is processed by either processing all files first or enqueuing
+// all directories before processing files.
+//
+// All lexical sorting is case-sensitive.
+//
+// The overhead of sorting is minimal compared to the syscalls needed to
+// walk directories. The impact on performance due to changing the order
+// in which directory entries are processed will be dependent on the workload
+// and the structure of the file tree being visited (it might also have no
+// impact).
+type SortMode uint32
+
+const (
+	// Perform no sorting. Files will be visited in directory order.
+	// This is the default.
+	SortNone SortMode = iota
+
+	// Directory entries are sorted by name before being visited.
+	SortLexical
+
+	// Sort the directory entries so that regular files and non-directories
+	// (e.g. symbolic links) are visited before directories. Within each
+	// group (regular files, other files, directories) the entries are sorted
+	// by name.
+	//
+	// This is likely the mode that programs that print the output of Walk
+	// want to use. Since by processing all files before enqueuing
+	// sub-directories the output is slightly more grouped.
+	//
+	// Example order:
+	//   - file: "a.txt"
+	//   - file: "b.txt"
+	//   - link: "a.link"
+	//   - link: "b.link"
+	//   - dir:  "d1/"
+	//   - dir:  "d2/"
+	//
+	SortFilesFirst
+
+	// Sort the directory entries so that directories are visited first, then
+	// regular files are visited, and finally everything else is visited
+	// (e.g. symbolic links). Within each group (directories, regular files,
+	// other files) the entries are sorted by name.
+	//
+	// This mode is might be useful at preventing other walk goroutines from
+	// stalling due to lack of work since it immediately enqueues all of a
+	// directory's sub-directories for processing. The impact on performance
+	// will be dependent on the workload and the structure of the file tree
+	// being visited - it might also have no (or even a negative) impact on
+	// performance so testing/benchmarking is recommend.
+	//
+	// An example workload that might cause this is: processing one directory
+	// takes a long time, that directory has sub-directories we want to walk,
+	// while processing that directory all other Walk goroutines have finished
+	// processing their directories, those goroutines are now stalled waiting
+	// for more work (waiting on the one running goroutine to enqueue its
+	// sub-directories for processing).
+	//
+	// This might also be beneficial if processing files is expensive.
+	//
+	// Example order:
+	//   - dir:  "d1/"
+	//   - dir:  "d2/"
+	//   - file: "a.txt"
+	//   - file: "b.txt"
+	//   - link: "a.link"
+	//   - link: "b.link"
+	//
+	SortDirsFirst
+)
+
+var sortModeStrs = [...]string{
+	SortNone:       "None",
+	SortLexical:    "Lexical",
+	SortDirsFirst:  "DirsFirst",
+	SortFilesFirst: "FilesFirst",
+}
+
+func (s SortMode) String() string {
+	if 0 <= int(s) && int(s) < len(sortModeStrs) {
+		return sortModeStrs[s]
+	}
+	return "SortMode(" + itoa(uint64(s)) + ")"
+}
+
+// DefaultConfig is the default [Config] used when none is supplied.
 var DefaultConfig = Config{
 	Follow:     false,
 	ToSlash:    DefaultToSlash(),
 	NumWorkers: DefaultNumWorkers(),
+	Sort:       SortNone,
 }
 
+// A Config controls the behavior of [Walk].
 type Config struct {
 	// TODO: do we want to pass a sentinel error to WalkFunc if
 	// a symlink loop is detected?
@@ -178,56 +276,105 @@ type Config struct {
 	// See FZF issue: https://github.com/junegunn/fzf/issues/3859
 	ToSlash bool
 
+	// Sort a directory's entries by SortMode before visiting them.
+	// The order that files are visited is deterministic only at the directory
+	// level, but not generally deterministic because we process directories
+	// in parallel. The performance impact of sorting entries is generally
+	// negligible compared to the syscalls required to read directories.
+	//
+	// This option mostly exists for programs that print the output of Walk
+	// (like FZF) since it provides some order and thus makes the output much
+	// nicer compared to the default directory order, which is basically random.
+	Sort SortMode
+
 	// Number of parallel workers to use. If NumWorkers if ≤ 0 then
-	// [DefaultNumWorkers] is used.
+	// DefaultNumWorkers is used.
 	NumWorkers int
 }
 
-// A DirEntry extends the fs.DirEntry interface to add a Stat() method
-// that returns the result of calling os.Stat() on the underlying file.
+// Copy returns a copy of c. If c is nil an empty [Config] is returned.
+func (c *Config) Copy() *Config {
+	dupe := new(Config)
+	if c != nil {
+		*dupe = *c
+	}
+	return dupe
+}
+
+// A DirEntry extends the [fs.DirEntry] interface to add a Stat() method
+// that returns the result of calling [os.Stat] on the underlying file.
 // The results of Info() and Stat() are cached.
 //
-// The fs.DirEntry argument passed to the fs.WalkDirFunc by Walk is
-// always a DirEntry. The only exception is the root directory with
-// with Walk is called.
+// The [fs.DirEntry] argument passed to the [fs.WalkDirFunc] by [Walk] is
+// always a DirEntry.
 type DirEntry interface {
 	fs.DirEntry
 
-	// Stat returns the FileInfo for the file or subdirectory described
+	// Stat returns the fs.FileInfo for the file or subdirectory described
 	// by the entry. The returned FileInfo may be from the time of the
-	// original directory read or from the time of the call to Stat.
+	// original directory read or from the time of the call to os.Stat.
 	// If the entry denotes a symbolic link, Stat reports the information
 	// about the target itself, not the link.
 	Stat() (fs.FileInfo, error)
 }
 
-// Walk is a faster implementation of filepath.Walk.
+// Walk is a faster implementation of [filepath.WalkDir] that walks the file
+// tree rooted at root in parallel, calling walkFn for each file or directory
+// in the tree, including root.
 //
-// filepath.Walk's design necessarily calls os.Lstat on each file, even if
-// the caller needs less info. Many tools need only the type of each file.
-// On some platforms, this information is provided directly by the readdir
-// system call, avoiding the need to stat each file individually.
-// fastwalk_unix.go contains a fork of the syscall routines.
+// All errors that arise visiting files and directories are filtered by walkFn
+// see the [fs.WalkDirFunc] documentation for details.
+// The [IgnorePermissionErrors] adapter is provided to handle to common case of
+// ignoring [fs.ErrPermission] errors.
 //
-// See golang.org/issue/16399
+// By default files are walked in directory order, which makes the output
+// non-deterministic. The Sort [Config] option can be used to control the order
+// in which directory entries are visited, but since we walk the file tree in
+// parallel the output is still non-deterministic (it's just slightly more
+// sorted).
 //
-// Walk walks the file tree rooted at root, calling walkFn for each file or
-// directory in the tree, including root.
+// When a symbolic link is encountered, by default Walk will not follow it
+// unless walkFn returns [ErrTraverseLink] or the Follow [Config] setting is
+// true. See below for a more detailed explanation.
 //
-// If walkFn returns filepath.SkipDir, the directory is skipped.
+// Walk calls walkFn with paths that use the separator character appropriate
+// for the operating system unless the ToSlash [Config] setting is true which
+// will cause all paths to be joined with a forward slash.
 //
-// Unlike filepath.WalkDir:
-//   - File stat calls must be done by the user and should be done via
-//     the DirEntry argument to walkFn since it caches the results of
-//     Stat and Lstat.
-//   - The fs.DirEntry argument is always a fastwalk.DirEntry, which has
-//     a Stat() method that returns the result of calling os.Stat() on the
-//     file. The result of Stat() may be cached.
+// If walkFn returns the [SkipDir] sentinel error, the directory is skipped.
+// If walkFn returns the [ErrSkipFiles] sentinel error, the callback will not
+// be called for any other files in the current directory.
+//
+// Unlike [filepath.WalkDir]:
+//
 //   - Multiple goroutines stat the filesystem concurrently. The provided
 //     walkFn must be safe for concurrent use.
-//   - Walk can follow symlinks if walkFn returns the ErrTraverseLink
-//     sentinel error. It is the walkFn's responsibility to prevent
-//     Walk from going into symlink cycles.
+//
+//   - The order that directories are visited is non-deterministic.
+//
+//   - File stat calls must be done by the user and should be done via
+//     the [DirEntry] argument to walkFn. The [DirEntry] caches the result
+//     of both Info() and Stat(). The Stat() method is a fastwalk specific
+//     extension and can be called by casting the [fs.DirEntry] to a
+//     [fastwalk.DirEntry] or via the [StatDirEntry] helper. The [fs.DirEntry]
+//     argument to walkFn will always be convertible to a [fastwalk.DirEntry].
+//
+//   - The [fs.DirEntry] argument is always a [fastwalk.DirEntry], which has
+//     a Stat() method that returns the result of calling [os.Stat] on the
+//     file. The result of Stat() and Info() are cached. The [StatDirEntry]
+//     helper can be used to call Stat() on the returned [fastwalk.DirEntry].
+//
+//   - Walk can follow symlinks in two ways: the fist, and simplest, is to
+//     set Follow [Config] option to true - this will cause Walk to follow
+//     symlinks and detect/ignore any symlink loops; the second, is for walkFn
+//     to return the sentinel [ErrTraverseLink] error.
+//     When using [ErrTraverseLink] to follow symlinks it is walkFn's
+//     responsibility to prevent Walk from going into symlink cycles.
+//     By default Walk does not follow symbolic links.
+//
+//   - When walking a directory, walkFn will be called for each non-directory
+//     entry and directories will be enqueued and visited at a later time or
+//     by another goroutine.
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	fi, err := os.Stat(root)
 	if err != nil {
@@ -253,7 +400,10 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	}
 
 	w := &walker{
-		fn:       walkFn,
+		fn: walkFn,
+		// TODO: Increase the size of enqueuec so that we don't stall
+		// while processing a directory. Increasing the size of workc
+		// doesn't help as much (needs more testing).
 		enqueuec: make(chan walkItem, numWorkers), // buffered for performance
 		workc:    make(chan walkItem, numWorkers), // buffered for performance
 		donec:    make(chan struct{}),
@@ -261,8 +411,10 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		// buffered for correctness & not leaking goroutines:
 		resc: make(chan error, numWorkers),
 
-		follow:  conf.Follow,
-		toSlash: conf.ToSlash,
+		// TODO: we should just pass the Config
+		follow:   conf.Follow,
+		toSlash:  conf.ToSlash,
+		sortMode: conf.Sort,
 	}
 	if w.follow {
 		w.ignoredDirs = append(w.ignoredDirs, fi)
@@ -276,6 +428,8 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	}
 
 	root = cleanRootPath(root)
+	// NOTE: in BenchmarkFastWalk the size of todo averages around
+	// 170 and can be in the ~250 range at max.
 	todo := []walkItem{{dir: root, info: fileInfoToDirEntry(filepath.Dir(root), fi)}}
 	out := 0
 	for {
@@ -291,6 +445,8 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 			todo = todo[:len(todo)-1]
 			out++
 		case it := <-w.enqueuec:
+			// TODO: consider appending to todo directly and using a
+			// mutext this might help with contention around select
 			todo = append(todo, it)
 		case err := <-w.resc:
 			out--
@@ -341,14 +497,15 @@ type walker struct {
 	enqueuec chan walkItem // from workers
 	resc     chan error    // from workers
 
-	ignoredDirs []os.FileInfo
+	ignoredDirs []fs.FileInfo
 	follow      bool
 	toSlash     bool
+	sortMode    SortMode
 }
 
 type walkItem struct {
 	dir          string
-	info         fs.DirEntry
+	info         DirEntry
 	callbackDone bool // callback already called; don't do it again
 }
 
@@ -359,7 +516,7 @@ func (w *walker) enqueue(it walkItem) {
 	}
 }
 
-func (w *walker) shouldSkipDir(fi os.FileInfo) bool {
+func (w *walker) shouldSkipDir(fi fs.FileInfo) bool {
 	for _, ignored := range w.ignoredDirs {
 		if os.SameFile(ignored, fi) {
 			return true
@@ -368,9 +525,8 @@ func (w *walker) shouldSkipDir(fi os.FileInfo) bool {
 	return false
 }
 
-func (w *walker) shouldTraverse(path string, de fs.DirEntry) bool {
-	// TODO: do we need to use filepath.EvalSymlinks() here?
-	ts, err := StatDirEntry(path, de)
+func (w *walker) shouldTraverse(path string, de DirEntry) bool {
+	ts, err := de.Stat()
 	if err != nil {
 		return false
 	}
@@ -405,13 +561,14 @@ func (w *walker) joinPaths(dir, base string) string {
 		}
 		return dir + "/" + base
 	}
+	// TODO: handle the above case of the argument to Walk being "/"
 	if w.toSlash {
 		return dir + "/" + base
 	}
 	return dir + string(os.PathSeparator) + base
 }
 
-func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
+func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
 	joined := w.joinPaths(dirName, baseName)
 	typ := de.Type()
 	if typ == os.ModeDir {
@@ -442,7 +599,7 @@ func (w *walker) onDirEnt(dirName, baseName string, de fs.DirEntry) error {
 	return err
 }
 
-func (w *walker) walk(root string, info fs.DirEntry, runUserCallback bool) error {
+func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
 	if runUserCallback {
 		err := w.fn(root, info, nil)
 		if err == filepath.SkipDir {
@@ -453,7 +610,7 @@ func (w *walker) walk(root string, info fs.DirEntry, runUserCallback bool) error
 		}
 	}
 
-	err := readDir(root, w.onDirEnt)
+	err := w.readDir(root)
 	if err != nil {
 		// Second call, to report ReadDir error.
 		return w.fn(root, info, err)
@@ -471,4 +628,18 @@ func cleanRootPath(root string) string {
 		return root[0:1] // root is all path separators ("//")
 	}
 	return root
+}
+
+// Avoid the dependency on strconv since it pulls in a large number of other
+// dependencies which bloats the size of this package.
+func itoa(val uint64) string {
+	buf := make([]byte, 20)
+	i := len(buf) - 1
+	for val >= 10 {
+		buf[i] = byte(val%10 + '0')
+		i--
+		val /= 10
+	}
+	buf[i] = byte(val + '0')
+	return string(buf[i:])
 }

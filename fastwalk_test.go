@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -75,11 +76,11 @@ func symlink(t testing.TB, oldname, newname string) error {
 
 func cleanupOrLogTempDir(t *testing.T, tempdir string) {
 	if e := recover(); e != nil {
-		t.Log("TMPDIR:", tempdir)
+		t.Log("TMPDIR:", filepath.ToSlash(tempdir))
 		t.Fatal(e)
 	}
 	if t.Failed() {
-		t.Log("TMPDIR:", tempdir)
+		t.Log("TMPDIR:", filepath.ToSlash(tempdir))
 	} else {
 		os.RemoveAll(tempdir)
 	}
@@ -112,7 +113,9 @@ func testCreateFiles(t *testing.T, tempdir string, files map[string]string) {
 	}
 }
 
-func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]string, callback fs.WalkDirFunc, want map[string]os.FileMode) {
+func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]string,
+	callback fs.WalkDirFunc, want map[string]os.FileMode) {
+
 	tempdir, err := os.MkdirTemp("", "test-fast-walk")
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +153,9 @@ func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]stri
 	}
 }
 
-func testFastWalk(t *testing.T, files map[string]string, callback fs.WalkDirFunc, want map[string]os.FileMode) {
+func testFastWalk(t *testing.T, files map[string]string,
+	callback fs.WalkDirFunc, want map[string]os.FileMode) {
+
 	testFastWalkConf(t, nil, files, callback, want)
 }
 
@@ -213,6 +218,9 @@ func maxFileNameLength(t testing.TB) int {
 // This test identified a "checkptr: converted pointer straddles multiple allocations"
 // error on darwin when getdirentries64 was used with the race-detector enabled.
 func TestFastWalk_LongFileName(t *testing.T) {
+	// Test is slow since we need to find the longest allowed filename
+	t.Parallel()
+
 	maxNameLen := maxFileNameLength(t)
 	if maxNameLen > 255 {
 		maxNameLen = 255
@@ -268,8 +276,9 @@ func maxPathLength(t testing.TB) (root string, pathMax int) {
 		var w strings.Builder
 		w.Grow(n + 1)
 		w.WriteString(base)
-		for w.Len() < n-32 {
-			w.WriteString("/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		elem := "/" + strings.Repeat("a", 127) // path element
+		for w.Len() < n-len(elem) {
+			w.WriteString(elem)
 		}
 		for w.Len() < n {
 			w.WriteByte('b')
@@ -321,9 +330,13 @@ func maxPathLength(t testing.TB) (root string, pathMax int) {
 // Test that we can handle PATH_MAX. This is mostly for the Unix tests
 // where we pass a buffer to ReadDirect (often getdents64(2)).
 func TestFastWalk_LongPath(t *testing.T) {
+	// Test is slow since we need to find the longest allowed file path
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("test not needed on Windows")
 	}
+
 	root, pathMax := maxPathLength(t)
 	t.Log("PATH_MAX:", pathMax)
 
@@ -361,7 +374,7 @@ func TestFastWalk_LongPath(t *testing.T) {
 		// Don't print the delta here since it might be very large. Instead
 		// write it to two temp files in a directory that is not removed on
 		// test exit so that the user can compare them themselves.
-		tempdir, err := os.MkdirTemp("", "test-fast-walk")
+		tempdir, err := os.MkdirTemp("", "fastwalk-test-*")
 		if err != nil {
 			t.Error(err)
 		}
@@ -432,60 +445,100 @@ func TestFastWalk_DirEntryType(t *testing.T) {
 }
 
 func TestFastWalk_SkipDir(t *testing.T) {
-	testFastWalk(t, map[string]string{
-		"foo/foo.go":   "one",
-		"bar/bar.go":   "two",
-		"skip/skip.go": "skip",
-	},
-		func(path string, de fs.DirEntry, err error) error {
-			requireNoError(t, err)
-			typ := de.Type().Type()
-			if typ == os.ModeDir && strings.HasSuffix(path, "skip") {
-				return filepath.SkipDir
-			}
-			return nil
+	test := func(t *testing.T, mode fastwalk.SortMode) {
+		conf := fastwalk.DefaultConfig.Copy()
+		conf.Sort = mode
+		testFastWalkConf(t, conf, map[string]string{
+			"foo/foo.go":   "one",
+			"bar/bar.go":   "two",
+			"skip/skip.go": "skip",
 		},
-		map[string]os.FileMode{
-			"":                os.ModeDir,
-			"/src":            os.ModeDir,
-			"/src/bar":        os.ModeDir,
-			"/src/bar/bar.go": 0,
-			"/src/foo":        os.ModeDir,
-			"/src/foo/foo.go": 0,
-			"/src/skip":       os.ModeDir,
+			func(path string, de fs.DirEntry, err error) error {
+				requireNoError(t, err)
+				typ := de.Type().Type()
+				if typ == os.ModeDir && strings.HasSuffix(path, "skip") {
+					return filepath.SkipDir
+				}
+				return nil
+			},
+			map[string]os.FileMode{
+				"":                os.ModeDir,
+				"/src":            os.ModeDir,
+				"/src/bar":        os.ModeDir,
+				"/src/bar/bar.go": 0,
+				"/src/foo":        os.ModeDir,
+				"/src/foo/foo.go": 0,
+				"/src/skip":       os.ModeDir,
+			})
+	}
+
+	// Test that sorting respects fastwalk.ErrSkipFiles
+	for _, mode := range []fastwalk.SortMode{
+		fastwalk.SortNone,
+		fastwalk.SortLexical,
+		fastwalk.SortDirsFirst,
+		fastwalk.SortFilesFirst,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			test(t, mode)
 		})
+	}
 }
 
 func TestFastWalk_SkipFiles(t *testing.T) {
-	// Directory iteration order is undefined, so there's no way to know
-	// which file to expect until the walk happens. Rather than mess
-	// with the test infrastructure, just mutate want.
-	var mu sync.Mutex
-	want := map[string]os.FileMode{
-		"":              os.ModeDir,
-		"/src":          os.ModeDir,
-		"/src/zzz":      os.ModeDir,
-		"/src/zzz/c.go": 0,
+	mapKeys := func(m map[string]os.FileMode) []string {
+		a := make([]string, 0, len(m))
+		for k := range m {
+			a = append(a, k)
+		}
+		return a
 	}
 
-	testFastWalk(t, map[string]string{
-		"a_skipfiles.go": "a",
-		"b_skipfiles.go": "b",
-		"zzz/c.go":       "c",
-	},
-		func(path string, _ fs.DirEntry, err error) error {
-			requireNoError(t, err)
-			if strings.HasSuffix(path, "_skipfiles.go") {
-				mu.Lock()
-				defer mu.Unlock()
-				want["/src/"+filepath.Base(path)] = 0
-				return fastwalk.ErrSkipFiles
-			}
-			return nil
+	test := func(t *testing.T, mode fastwalk.SortMode) {
+		// Directory iteration order is undefined, so there's no way to know
+		// which file to expect until the walk happens. Rather than mess
+		// with the test infrastructure, just mutate want.
+		want := map[string]os.FileMode{
+			"":              os.ModeDir,
+			"/src":          os.ModeDir,
+			"/src/zzz":      os.ModeDir,
+			"/src/zzz/c.go": 0,
+		}
+		conf := fastwalk.DefaultConfig.Copy()
+		conf.Sort = mode
+		var mu sync.Mutex
+		testFastWalkConf(t, conf, map[string]string{
+			"a_skipfiles.go": "a",
+			"b_skipfiles.go": "b",
+			"zzz/c.go":       "c",
 		},
-		want)
-	if len(want) != 5 {
-		t.Errorf("saw too many files: wanted 5, got %v (%v)", len(want), want)
+			func(path string, _ fs.DirEntry, err error) error {
+				requireNoError(t, err)
+				if strings.HasSuffix(path, "_skipfiles.go") {
+					mu.Lock()
+					defer mu.Unlock()
+					want["/src/"+filepath.Base(path)] = 0
+					return fastwalk.ErrSkipFiles
+				}
+				return nil
+			},
+			want)
+		if len(want) != 5 {
+			t.Errorf("invalid number of files visited: wanted 5, got %v (%q)",
+				len(want), mapKeys(want))
+		}
+	}
+
+	// Test that sorting respects fastwalk.ErrSkipFiles
+	for _, mode := range []fastwalk.SortMode{
+		fastwalk.SortNone,
+		fastwalk.SortLexical,
+		fastwalk.SortDirsFirst,
+		fastwalk.SortFilesFirst,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			test(t, mode)
+		})
 	}
 }
 
@@ -622,7 +675,7 @@ func TestFastWalk_Follow_SkipDir(t *testing.T) {
 }
 
 func TestFastWalk_Follow_SymlinkLoop(t *testing.T) {
-	tempdir, err := os.MkdirTemp("", "test-fast-walk")
+	tempdir, err := os.MkdirTemp("", "fastwalk-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +780,7 @@ func TestFastWalk_ErrNotExist(t *testing.T) {
 
 func TestFastWalk_ErrPermission(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("test not-supported for Windows")
+		t.Skip("test not supported for Windows")
 	}
 	tempdir := t.TempDir()
 	want := map[string]os.FileMode{
@@ -756,6 +809,9 @@ func TestFastWalk_ErrPermission(t *testing.T) {
 	t.Cleanup(func() {
 		if err := os.Remove(filename); err != nil {
 			t.Error(err)
+		}
+		if err := os.Chmod(dirname, 0755); err != nil {
+			t.Log(err)
 		}
 		if err := os.Remove(dirname); err != nil {
 			t.Error(err)
@@ -824,6 +880,149 @@ func TestFastWalk_ToSlash(t *testing.T) {
 	}
 	if count.Load() == 0 {
 		t.Fatal("did not walk any files")
+	}
+}
+
+func TestFastWalk_SortMode(t *testing.T) {
+	// Can only assert on files since the order that directories are
+	// traversed is non-deterministic.
+
+	tmp, err := os.MkdirTemp("", "test-fast-walk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupOrLogTempDir(t, tmp)
+
+	want := []string{
+		"a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt",
+		"a.lnk", "b.lnk", "c.lnk", "d.lnk", "e.lnk", "f.lnk",
+	}
+	for _, name := range want {
+		path := filepath.Join(tmp, name)
+		if strings.HasSuffix(name, ".txt") {
+			if err := writeFile(path, "data", 0666); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err := symlink(t, path, path); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	for _, mode := range []fastwalk.SortMode{
+		fastwalk.SortLexical,
+		fastwalk.SortFilesFirst,
+		// We don't actually have any dirs because the order
+		// they're visited is non-deterministic.
+		fastwalk.SortDirsFirst,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			want := append([]string(nil), want...)
+			if mode == fastwalk.SortLexical {
+				sort.Strings(want)
+			}
+
+			conf := fastwalk.Config{
+				Sort: mode,
+			}
+			// We technically don't need a mutex since we're visiting
+			// only one directory, but use it for correctness.
+			var mu sync.Mutex
+			var got []string
+			fastwalk.Walk(&conf, tmp, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				// Ignore the parent directory
+				if !d.IsDir() {
+					mu.Lock()
+					got = append(got, d.Name())
+					mu.Unlock()
+				}
+				return nil
+			})
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("Invalid output\ngot:  %q\nwant: %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSortModeString(t *testing.T) {
+	tests := []struct {
+		mode fastwalk.SortMode
+		want string
+	}{
+		{fastwalk.SortNone, "None"},
+		{fastwalk.SortLexical, "Lexical"},
+		{fastwalk.SortDirsFirst, "DirsFirst"},
+		{fastwalk.SortFilesFirst, "FilesFirst"},
+		{100, "SortMode(100)"},
+		{math.MaxUint32, fmt.Sprintf("SortMode(%d)", math.MaxUint32)},
+	}
+	for _, test := range tests {
+		got := test.mode.String()
+		if got != test.want {
+			t.Errorf("%d: got: %s want: %s", test.mode, got, test.want)
+		}
+	}
+}
+
+func TestConfigCopy(t *testing.T) {
+	t.Run("Nil", func(t *testing.T) {
+		c := (*fastwalk.Config)(nil).Copy()
+		if c == nil {
+			t.Fatal("failed to copy nil config")
+		}
+		if *c != (fastwalk.Config{}) {
+			t.Fatal("copy of nil config should be empty")
+		}
+	})
+	t.Run("Copy", func(t *testing.T) {
+		a := fastwalk.DefaultConfig
+		c := a.Copy()
+		c.NumWorkers *= 2
+		if a.NumWorkers == c.NumWorkers {
+			t.Fatal("failed to copy config")
+		}
+	})
+}
+
+func TestFastWalkJoinPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("not supported on Windows")
+	}
+	if abs, err := filepath.Abs("/"); err != nil || abs != "/" {
+		t.Skipf(`skipping filepath.Abs("/") = %q, %v; want: "/", nil`, abs, err)
+	}
+	sentinel := errors.New("halt now")
+	var root string
+	var once sync.Once
+	err := fastwalk.Walk(nil, "///", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		once.Do(func() {
+			root = path
+		})
+		return sentinel
+	})
+	if err != nil && err != sentinel {
+		t.Fatal(err)
+	}
+	if root != "/" {
+		t.Fatalf(`failed to convert root "///" to "/" got: %q`, root)
+	}
+}
+
+func BenchmarkSortModeString(b *testing.B) {
+	var s string
+	for i := 0; i < b.N; i++ {
+		s = fastwalk.SortMode(10).String()
+	}
+	if b.Failed() {
+		b.Log(s)
 	}
 }
 
@@ -917,6 +1116,23 @@ func benchmarkFastWalk(b *testing.B, conf *fastwalk.Config,
 
 func BenchmarkFastWalk(b *testing.B) {
 	benchmarkFastWalk(b, nil, nil)
+}
+
+func BenchmarkFastWalkSort(b *testing.B) {
+	for _, mode := range []fastwalk.SortMode{
+		fastwalk.SortNone,
+		fastwalk.SortLexical,
+		fastwalk.SortDirsFirst,
+		fastwalk.SortFilesFirst,
+	} {
+		b.Run(mode.String(), func(b *testing.B) {
+			conf := fastwalk.DefaultConfig.Copy()
+			conf.Sort = mode
+			benchmarkFastWalk(b, conf, func(x fs.WalkDirFunc) fs.WalkDirFunc {
+				return noopWalkFunc
+			})
+		})
+	}
 }
 
 func BenchmarkFastWalkFollow(b *testing.B) {

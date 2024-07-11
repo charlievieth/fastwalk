@@ -1,15 +1,18 @@
-//go:build aix || dragonfly || freebsd || (js && wasm) || linux || netbsd || openbsd || solaris
+//go:build darwin || aix || dragonfly || freebsd || (js && wasm) || linux || netbsd || openbsd || solaris
 
 package fastwalk
 
 import (
 	"io/fs"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -114,6 +117,108 @@ func TestUnixDirent(t *testing.T) {
 			ent := newUnixDirent(tempdir, filepath.Base(linkName), fileInfo.Mode().Type())
 			testUnixDirentParallel(t, ent, fileInfo, (*unixDirent).Info)
 		})
+	})
+}
+
+// NB: this must be kept in sync with the
+// TestSortDirents in dirent_portable_test.go
+func TestSortDirents(t *testing.T) {
+	direntNames := func(dents []*unixDirent) []string {
+		names := make([]string, len(dents))
+		for i, d := range dents {
+			names[i] = d.Name()
+		}
+		return names
+	}
+
+	t.Run("None", func(t *testing.T) {
+		dents := []*unixDirent{
+			{name: "b"},
+			{name: "a"},
+			{name: "d"},
+			{name: "c"},
+		}
+		want := direntNames(dents)
+		sortDirents(SortNone, dents)
+		got := direntNames(dents)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got: %q want: %q", got, want)
+		}
+	})
+
+	rr := rand.New(rand.NewSource(time.Now().UnixNano()))
+	shuffleDirents := func(dents []*unixDirent) []*unixDirent {
+		rr.Shuffle(len(dents), func(i, j int) {
+			dents[i], dents[j] = dents[j], dents[i]
+		})
+		return dents
+	}
+
+	// dents needs to be in the expected order
+	test := func(t *testing.T, dents []*unixDirent, mode SortMode) {
+		want := direntNames(dents)
+		// Run multiple times with different shuffles
+		for i := 0; i < 10; i++ {
+			t.Run("", func(t *testing.T) {
+				sortDirents(mode, shuffleDirents(dents))
+				got := direntNames(dents)
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("got: %q want: %q", got, want)
+				}
+			})
+		}
+	}
+
+	t.Run("Lexical", func(t *testing.T) {
+		dents := []*unixDirent{
+			{name: "a"},
+			{name: "b"},
+			{name: "c"},
+			{name: "d"},
+		}
+		test(t, dents, SortLexical)
+	})
+
+	t.Run("FilesFirst", func(t *testing.T) {
+		dents := []*unixDirent{
+			// Files lexically
+			{name: "f1", typ: 0},
+			{name: "f2", typ: 0},
+			{name: "f3", typ: 0},
+			// Non-dirs lexically
+			{name: "a1", typ: fs.ModeSymlink},
+			{name: "a2", typ: fs.ModeSymlink},
+			{name: "a3", typ: fs.ModeSymlink},
+			{name: "s1", typ: fs.ModeSocket},
+			{name: "s2", typ: fs.ModeSocket},
+			{name: "s3", typ: fs.ModeSocket},
+			// Dirs lexically
+			{name: "d1", typ: fs.ModeDir},
+			{name: "d2", typ: fs.ModeDir},
+			{name: "d3", typ: fs.ModeDir},
+		}
+		test(t, dents, SortFilesFirst)
+	})
+
+	t.Run("DirsFirst", func(t *testing.T) {
+		dents := []*unixDirent{
+			// Dirs lexically
+			{name: "d1", typ: fs.ModeDir},
+			{name: "d2", typ: fs.ModeDir},
+			{name: "d3", typ: fs.ModeDir},
+			// Files lexically
+			{name: "f1", typ: 0},
+			{name: "f2", typ: 0},
+			{name: "f3", typ: 0},
+			// Non-dirs lexically
+			{name: "a1", typ: fs.ModeSymlink},
+			{name: "a2", typ: fs.ModeSymlink},
+			{name: "a3", typ: fs.ModeSymlink},
+			{name: "s1", typ: fs.ModeSocket},
+			{name: "s2", typ: fs.ModeSocket},
+			{name: "s3", typ: fs.ModeSocket},
+		}
+		test(t, dents, SortDirsFirst)
 	})
 }
 
