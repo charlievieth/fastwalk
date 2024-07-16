@@ -88,35 +88,59 @@ func DefaultNumWorkers() int {
 }
 
 // DefaultToSlash returns true if this is a Go program compiled for Windows
-// running in an environment ([WSL] or [MSYS/MSYS2]) that uses forward slashes
-// as the path separator instead of the native backslash.
-// On all other platforms this is a no-op and returns false since the native
-// path separator is a forward slash and does not need to be converted.
+// running in an environment ([MSYS/MSYS2] or [Git for Windows]) that uses
+// forward slashes as the path separator instead of the native backslash.
 //
-// This check does not apply to programs compiled in [WSL] [MSYS/MSYS2] or for
-// Linux (GOOS=linux). It only applies to Go programs compiled for Windows
-// (GOOS=windows) that are executed from [WSL] or [MSYS/MSYS2].
+// On non-Windows OSes this is a no-op and always returns false.
 //
-// To detect if we're running in [MSYS/MSYS2] we check that "MSYSTEM" environment
-// variable is either "MINGW64", "MINGW32", or "MSYS".
+// To detect if we're running in [MSYS/MSYS2] we check if the "MSYSTEM"
+// environment variable exists.
 //
-// The following heuristics are used to detect if we're running in [WSL]:
+// DefaultToSlash does not detect if this is a Windows executable running in [WSL].
+// Instead, users should (ideally) use programs compiled for Linux in WSL.
 //
-//   - Existence of "/proc/sys/fs/binfmt_misc/WSLInterop".
-//   - If the "WSL_DISTRO_NAME" environment variable is set.
-//   - If "/proc/version" contains either "Microsoft" or "microsoft".
+// See: [github.com/junegunn/fzf/issues/3859]
 //
-// The result of the WSL check is cached for performance reasons.
+// NOTE: The reason that we do not check if we're running in WSL is that the
+// test was inconsistent since it depended on the working directory (it seems
+// that "/proc" cannot be accessed when programs are ran from a mounted Windows
+// directory) and what environment variables are shared between WSL and Win32
+// (this requires explicit [configuration]).
 //
-// See: https://github.com/junegunn/fzf/issues/3859
-//
-// [WSL]: https://learn.microsoft.com/en-us/windows/wsl/about
 // [MSYS/MSYS2]: https://www.msys2.org/
+// [WSL]: https://learn.microsoft.com/en-us/windows/wsl/about
+// [Git for Windows]: https://gitforwindows.org/
+// [github.com/junegunn/fzf/issues/3859]: https://github.com/junegunn/fzf/issues/3859
+// [configuration]: https://devblogs.microsoft.com/commandline/share-environment-vars-between-wsl-and-windows/
 func DefaultToSlash() bool {
 	if runtime.GOOS != "windows" {
 		return false
 	}
-	return useForwardSlash()
+	// Previously this function attempted to determine if this is a Windows exe
+	// running in WSL. The check was:
+	//
+	// * File /proc/sys/fs/binfmt_misc/WSLInterop exist
+	// * Env var "WSL_DISTRO_NAME" exits
+	// * /proc/version contains "Microsoft" or "microsoft"
+	//
+	// Below are my notes explaining why that check was flaky:
+	//
+	// NOTE: This appears to fail when ran from WSL when the current working
+	// directory is a Windows directory that is mounted ("/mnt/c/...") since
+	// "/proc" is not accessible. It works if ran from a directory that is not
+	// mounted. Additionally, the "WSL_DISTRO_NAME" environment variable is not
+	// set when ran from WSL.
+	//
+	// I'm not sure what causes this, but it would be great to find a solution.
+	// My guess is that when ran from a Windows directory it uses the native
+	// Windows path syscalls (for example os.Getwd reports the canonical Windows
+	// path when a Go exe is ran from a mounted directory in WSL, but reports the
+	// WSL path when ran from outside a mounted Windows directory).
+	//
+	// That said, the real solution here is to use programs compiled for Linux
+	// when running in WSL.
+	_, ok := os.LookupEnv("MSYSTEM")
+	return ok
 }
 
 // DefaultConfig is the default Config used when none is supplied.

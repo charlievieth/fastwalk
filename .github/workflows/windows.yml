@@ -22,3 +22,39 @@ jobs:
         go-version: ${{ matrix.go }}
     - name: Test Race
       run: go test -race ./...
+
+# WSL Test: disabled for now since it's very slow (~5 minutes)
+#
+# name: Test fastwalk on Windows WSL
+#
+# on:
+#   push:
+#     branches: [ master ]
+#   pull_request:
+#     branches: [ master ]
+#
+# jobs:
+#   build:
+#     runs-on: windows-latest
+#     strategy:
+#       matrix:
+#         go: [1.22]
+#     steps:
+#     - uses: actions/checkout@v4
+#       with:
+#         fetch-depth: 1
+#     - uses: Vampire/setup-wsl@v3
+#       with:
+#         distribution: Ubuntu-24.04
+#     - name: Set up Go
+#       uses: actions/setup-go@v5
+#       with:
+#         go-version: ${{ matrix.go }}
+#     - name: Build Test
+#       run: go test -c -o fastwalk.test.exe
+#     - name: Test WSL
+#       shell: wsl-bash {0}
+#       run: |
+#         cp ./fastwalk.test.exe /tmp/fastwalk.test.exe
+#         cd /tmp
+#         ./fastwalk.test.exe -test.v -test.run TestRunningUnderWSL -test-wsl
