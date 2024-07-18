@@ -47,7 +47,9 @@ test_build_solaris_amd64:
 
 .PHONY: test_build_wasip1_wasm
 test_build_wasip1_wasm:
-	GOOS=wasip1 GOARCH=wasm go test -c -o /dev/null
+	@# Ignore versions before 1.21
+	go version | grep -qE 'go1\.(20|1[0-9])' || \
+		GOOS=wasip1 GOARCH=wasm go test -c -o /dev/null
 
 .PHONY: test_build_aix_ppc64
 test_build_aix_ppc64:
