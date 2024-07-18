@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/charlievieth/fastwalk/internal/fmtdirent"
 )
 
 var _ DirEntry = dirEntry{}
@@ -25,7 +27,7 @@ func (de dirEntry) Info() (fs.FileInfo, error) { panic("not implemented") }
 func (de dirEntry) Stat() (fs.FileInfo, error) { panic("not implemented") }
 
 func (de dirEntry) String() string {
-	return fs.FormatDirEntry(de)
+	return fmtdirent.FormatDirEntry(de)
 }
 
 // NB: this must be kept in sync with the

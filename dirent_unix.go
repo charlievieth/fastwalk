@@ -5,9 +5,10 @@ package fastwalk
 import (
 	"io/fs"
 	"os"
-	"slices"
-	"strings"
+	"sort"
 	"sync"
+
+	"github.com/charlievieth/fastwalk/internal/fmtdirent"
 )
 
 type unixDirent struct {
@@ -21,7 +22,7 @@ type unixDirent struct {
 func (d *unixDirent) Name() string      { return d.name }
 func (d *unixDirent) IsDir() bool       { return d.typ.IsDir() }
 func (d *unixDirent) Type() fs.FileMode { return d.typ }
-func (d *unixDirent) String() string    { return fs.FormatDirEntry(d) }
+func (d *unixDirent) String() string    { return fmtdirent.FormatDirEntry(d) }
 
 func (d *unixDirent) Info() (fs.FileInfo, error) {
 	info := loadFileInfo(&d.info)
@@ -87,52 +88,56 @@ func sortDirents(mode SortMode, dents []*unixDirent) {
 	}
 	switch mode {
 	case SortLexical:
-		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
-			return strings.Compare(d1.name, d2.name)
+		sort.Slice(dents, func(i, j int) bool {
+			return dents[i].name < dents[j].name
 		})
 	case SortFilesFirst:
-		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
+		sort.Slice(dents, func(i, j int) bool {
+			d1 := dents[i]
+			d2 := dents[j]
 			r1 := d1.typ.IsRegular()
 			r2 := d2.typ.IsRegular()
 			switch {
 			case r1 && !r2:
-				return -1
+				return true
 			case !r1 && r2:
-				return 1
+				return false
 			case !r1 && !r2:
 				// Both are not regular files: sort directories last
 				dd1 := d1.typ.IsDir()
 				dd2 := d2.typ.IsDir()
 				switch {
 				case !dd1 && dd2:
-					return -1
+					return true
 				case dd1 && !dd2:
-					return 1
+					return false
 				}
 			}
-			return strings.Compare(d1.name, d2.name)
+			return d1.name < d2.name
 		})
 	case SortDirsFirst:
-		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
+		sort.Slice(dents, func(i, j int) bool {
+			d1 := dents[i]
+			d2 := dents[j]
 			dd1 := d1.typ.IsDir()
 			dd2 := d2.typ.IsDir()
 			switch {
 			case dd1 && !dd2:
-				return -1
+				return true
 			case !dd1 && dd2:
-				return 1
+				return false
 			case !dd1 && !dd2:
 				// Both are not directories: sort regular files first
 				r1 := d1.typ.IsRegular()
 				r2 := d2.typ.IsRegular()
 				switch {
 				case r1 && !r2:
-					return -1
+					return true
 				case !r1 && r2:
-					return 1
+					return false
 				}
 			}
-			return strings.Compare(d1.name, d2.name)
+			return d1.name < d2.name
 		})
 	}
 }
