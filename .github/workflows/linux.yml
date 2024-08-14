@@ -10,8 +10,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      # Test all supported versions on Linux (since it's fast)
       matrix:
-        go: ['1.20', '1.21', '1.22']
+        go: ['1.20', '1.21', '1.22', '1.23']
     steps:
     - uses: actions/checkout@v4
       with:
