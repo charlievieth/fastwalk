@@ -1016,6 +1016,15 @@ func TestFastWalkJoinPaths(t *testing.T) {
 	}
 }
 
+func TestSkipAll(t *testing.T) {
+	err := fastwalk.Walk(nil, ".", func(path string, info fs.DirEntry, err error) error {
+		return fs.SkipAll
+	})
+	if err != fs.SkipAll {
+		t.Error("Expected fs.SkipAll to be returned got:", err)
+	}
+}
+
 func BenchmarkSortModeString(b *testing.B) {
 	var s string
 	for i := 0; i < b.N; i++ {
