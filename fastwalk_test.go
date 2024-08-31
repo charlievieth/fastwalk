@@ -959,7 +959,7 @@ func TestSortModeString(t *testing.T) {
 		{fastwalk.SortDirsFirst, "DirsFirst"},
 		{fastwalk.SortFilesFirst, "FilesFirst"},
 		{100, "SortMode(100)"},
-		{math.MaxUint32, fmt.Sprintf("SortMode(%d)", math.MaxUint32)},
+		{math.MaxUint32, fmt.Sprintf("SortMode(%d)", uint32(math.MaxUint32))},
 	}
 	for _, test := range tests {
 		got := test.mode.String()
