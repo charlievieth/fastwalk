@@ -60,7 +60,9 @@ var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 // as an error by any function.
 var SkipDir = fs.SkipDir
 
-// TODO: add fs.SkipAll
+// TODO(charlie): Look into implementing the fs.SkipAll behavior of
+// filepath.Walk and filepath.WalkDir. This may not be possible without taking
+// a performance hit.
 
 // DefaultNumWorkers returns the default number of worker goroutines to use in
 // [Walk] and is the value of [runtime.GOMAXPROCS](-1) clamped to a range
@@ -343,7 +345,9 @@ type DirEntry interface {
 //
 // If walkFn returns the [SkipDir] sentinel error, the directory is skipped.
 // If walkFn returns the [ErrSkipFiles] sentinel error, the callback will not
-// be called for any other files in the current directory.
+// be called for any other files in the current directory. Unlike,
+// [filepath.Walk] and [filepath.WalkDir] the [fs.SkipAll] sentinel error is
+// not respected.
 //
 // Unlike [filepath.WalkDir]:
 //
@@ -375,6 +379,9 @@ type DirEntry interface {
 //   - When walking a directory, walkFn will be called for each non-directory
 //     entry and directories will be enqueued and visited at a later time or
 //     by another goroutine.
+//
+//   - The [fs.SkipAll] sentinel error is not respected and not ignored. If the
+//     WalkDirFunc returns SkipAll then Walk will exit with the error SkipAll.
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	fi, err := os.Stat(root)
 	if err != nil {
