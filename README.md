@@ -8,7 +8,7 @@
 Fast parallel directory traversal for Golang.
 
 Package fastwalk provides a fast parallel version of [`filepath.WalkDir`](https://pkg.go.dev/io/fs#WalkDirFunc)
-that is \~2x faster on macOS, \~4x faster on Linux, \~6x faster on Windows,
+that is \~2.5x faster on macOS, \~4x faster on Linux, \~6x faster on Windows,
 allocates 50% less memory, and requires 25% fewer memory allocations.
 Additionally, it is \~4-5x faster than [godirwalk](https://github.com/karrick/godirwalk)
 across OSes.
@@ -20,7 +20,7 @@ Inspired by and based off of [golang.org/x/tools/internal/fastwalk](https://pkg.
 * Fast: multiple goroutines stat the filesystem and call the
   [`filepath.WalkDirFunc`](https://pkg.go.dev/io/fs#WalkDirFunc) callback concurrently
 * Safe symbolic link traversal ([`Config.Follow`](https://pkg.go.dev/github.com/charlievieth/fastwalk#Config))
-* Same behavior and callback signature as [`filepath.WalkDir`](https://pkg.go.dev/path/filepath@go1.17.7#WalkDir)
+* Same behavior and callback signature as [`filepath.WalkDir`](https://pkg.go.dev/path/filepath#WalkDir)
 * Wrapper functions are provided to ignore duplicate files and directories:
 	[`IgnoreDuplicateFiles()`](https://pkg.go.dev/github.com/charlievieth/fastwalk#IgnoreDuplicateFiles)
 	and
