@@ -9,6 +9,35 @@ import (
 	"unsafe"
 )
 
+type xFileInfo struct {
+	info *fileInfo
+	stat *fileInfo
+}
+
+func (f *xFileInfo) loadInfo() *fileInfo {
+	return loadFileInfo(&f.info)
+}
+
+func (f *xFileInfo) loadStat() *fileInfo {
+	return loadFileInfo(&f.stat)
+}
+
+func loadXFileInfo(pinfo **xFileInfo) *xFileInfo {
+	ptr := (*unsafe.Pointer)(unsafe.Pointer(pinfo))
+	fi := (*xFileInfo)(atomic.LoadPointer(ptr))
+	if fi == nil {
+		fi = &xFileInfo{}
+		if !atomic.CompareAndSwapPointer(
+			(*unsafe.Pointer)(unsafe.Pointer(pinfo)), // adrr
+			nil,                                      // old
+			unsafe.Pointer(fi),                       // new
+		) {
+			fi = (*xFileInfo)(atomic.LoadPointer(ptr))
+		}
+	}
+	return fi
+}
+
 type fileInfo struct {
 	once sync.Once
 	fs.FileInfo

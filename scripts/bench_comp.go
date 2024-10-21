@@ -36,7 +36,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	runTest := func(name string) error {
+	runTest := func(name string) {
 		fmt.Println("##", name)
 
 		filename := filepath.Join(tmpdir, name+".txt")
@@ -69,7 +69,6 @@ func main() {
 		}
 
 		fmt.Print("\n")
-		return nil
 	}
 
 	for _, name := range Tests {

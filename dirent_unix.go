@@ -15,8 +15,9 @@ type unixDirent struct {
 	parent string
 	name   string
 	typ    fs.FileMode
-	info   *fileInfo
-	stat   *fileInfo
+	info   *xFileInfo
+	// info   *fileInfo
+	// stat   *fileInfo
 }
 
 func (d *unixDirent) Name() string      { return d.name }
@@ -25,7 +26,7 @@ func (d *unixDirent) Type() fs.FileMode { return d.typ }
 func (d *unixDirent) String() string    { return fmtdirent.FormatDirEntry(d) }
 
 func (d *unixDirent) Info() (fs.FileInfo, error) {
-	info := loadFileInfo(&d.info)
+	info := loadXFileInfo(&d.info).loadInfo()
 	info.once.Do(func() {
 		info.FileInfo, info.err = os.Lstat(d.parent + "/" + d.name)
 	})
@@ -36,7 +37,7 @@ func (d *unixDirent) Stat() (fs.FileInfo, error) {
 	if d.typ&os.ModeSymlink == 0 {
 		return d.Info()
 	}
-	stat := loadFileInfo(&d.stat)
+	stat := loadXFileInfo(&d.info).loadStat()
 	stat.once.Do(func() {
 		stat.FileInfo, stat.err = os.Stat(d.parent + "/" + d.name)
 	})
@@ -60,7 +61,7 @@ func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
 		parent: dirname,
 		name:   fi.Name(),
 		typ:    fi.Mode().Type(),
-		info:   info,
+		info:   &xFileInfo{info: info},
 	}
 }
 
