@@ -563,12 +563,14 @@ func (w *walker) joinPaths(dir, base string) string {
 	// Handle the case where the root path argument to Walk is "/"
 	// without this the returned path is prefixed with "//".
 	if os.PathSeparator == '/' {
-		if dir == "/" {
+		if len(dir) != 0 && dir[len(dir)-1] == '/' {
 			return dir + base
 		}
 		return dir + "/" + base
 	}
-	// TODO: handle the above case of the argument to Walk being "/"
+	if len(dir) != 0 && os.IsPathSeparator(dir[len(dir)-1]) {
+		return dir + base
+	}
 	if w.toSlash {
 		return dir + "/" + base
 	}
@@ -625,7 +627,17 @@ func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
 	return nil
 }
 
+// cleanRootPath returns the root path trimmed of extraneous trailing slashes.
+// This is a no-op on Windows.
 func cleanRootPath(root string) string {
+	if runtime.GOOS == "windows" || len(filepath.VolumeName(root)) != 0 {
+		// Windows paths or any path with a volume name (which AFAIK should
+		// only be Windows) are a bit too complicated to clean.
+		return root
+	}
+	if len(filepath.VolumeName(root)) != 0 {
+		return root
+	}
 	for i := len(root) - 1; i >= 0; i-- {
 		if !os.IsPathSeparator(root[i]) {
 			return root[:i+1]

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -386,6 +387,207 @@ func TestFastWalk_LongPath(t *testing.T) {
 		}
 		t.Fatalf("Output does not match: see the files in: %q", tempdir)
 	}
+}
+
+func TestFastWalk_WindowsRootPaths(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("test only supported on Windows")
+	}
+
+	sameFile := func(t *testing.T, name1, name2 string) bool {
+		fi1, err := os.Stat(name1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fi2, err := os.Stat(name2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return os.SameFile(fi1, fi2)
+	}
+
+	walk := func(t *testing.T, root string) map[string]fs.DirEntry {
+		var mu sync.Mutex
+		seen := make(map[string]fs.DirEntry)
+		errStop := errors.New("errStop")
+		fn := func(path string, de fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			seen[path] = de
+			mu.Unlock()
+			if path != root && de.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		err := fastwalk.Walk(nil, root, fastwalk.IgnorePermissionErrors(fn))
+		if err != nil && err != errStop {
+			t.Fatal(err)
+		}
+		if len(seen) <= 1 {
+			// If we are a child of the root directory we should have visited at
+			// least two entries: the root itself and a directory that leads to,
+			// or is, our current working directory.
+			t.Fatalf("empty directory: %s", root)
+		}
+		return seen
+	}
+
+	pwd, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vol := filepath.VolumeName(pwd)
+	if !regexp.MustCompile(`^[A-Za-z]:$`).MatchString(vol) {
+		// Ignore UNC names and other weird Windows paths to keep this simple.
+		t.Skipf("unsupported volume name: %s for path: %s", vol, pwd)
+	}
+	if !sameFile(t, pwd, vol) {
+		t.Skipf("skipping %s and %s should be considered the same file", pwd, vol)
+	}
+
+	// Test that walking the disk root ("C:\") actually walks the disk root.
+	// Previously, there was a bug where the path "C:\" was transformed to "C:"
+	// before walking which caused fastwalk to walk the current directory.
+	//
+	// https://github.com/charlievieth/fastwalk/issues/37
+	t.Run("FullyQualified", func(t *testing.T) {
+		root := vol + `\`
+		if sameFile(t, pwd, root) {
+			t.Skipf("the current working directory (%s) is the disk root: %s", pwd, root)
+		}
+		seen := walk(t, root)
+
+		// Make sure we don't append an extraneous slash to the root ("C:\" => "C:\\a").
+		for path := range seen {
+			rest := strings.TrimPrefix(path, vol)
+			if strings.Contains(rest, `\\`) {
+				t.Errorf(`path contains multiple consecutive slashes after volume (%s): "%s"`,
+					vol, path)
+			}
+			if s := filepath.Clean(path); s != path {
+				t.Errorf(`filepath.Clean("%s") == "%s"`, path, s)
+			}
+		}
+
+		// Make sure we didn't walk the current directory. This will happen if
+		// the root argument to Walk is a drive letter ("C:\") but we strip off
+		// the trailing slash ("C:\" => "C:") since this makes the path relative
+		// to the current directory on drive "C".
+		//
+		// See: https://github.com/charlievieth/fastwalk/issues/37
+		//
+		// Docs: https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file#fully-qualified-vs-relative-paths
+		for path, de := range seen {
+			if path == root {
+				// Ignore root since filepath.Base("C:\") == "\" and "C:\" and "\"
+				// are equivalent.
+				continue
+			}
+			fi1, err := de.Info()
+			if err != nil {
+				if os.IsNotExist(err) || os.IsPermission(err) {
+					continue
+				}
+				t.Fatal(err)
+			}
+			name := filepath.Base(path)
+			fi2, err := os.Lstat(name)
+			if err != nil {
+				continue
+			}
+			if os.SameFile(fi1, fi2) {
+				t.Errorf("Walking root (%s) returned entries for the current working "+
+					"directory (%s): file %s is the same as %s", root, pwd, path, name)
+			}
+		}
+
+		// Add file base name mappings
+		for _, de := range seen {
+			seen[de.Name()] = de
+		}
+
+		// Make sure we read some files from the disk root.
+		des, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(des) == 0 {
+			t.Fatalf("Disk root %s contains no files!", root)
+		}
+		same := 0
+		for _, d2 := range des {
+			d1 := seen[d2.Name()]
+			if d1 == nil {
+				continue
+			}
+			fi1, err := d1.Info()
+			if err != nil {
+				t.Log(err)
+				continue
+			}
+			fi2, err := d2.Info()
+			if err != nil {
+				t.Log(err)
+				continue
+			}
+			if os.SameFile(fi1, fi2) {
+				same++
+			}
+		}
+		// TODO: Expect to see N% of files and use
+		// a more descriptive error message
+		if same == 0 {
+			t.Fatalf(`Error failed to walk dist root: "%s"`, root)
+		}
+	})
+
+	// Test that paths like "C:" are treated as a relative path.
+	t.Run("Relative", func(t *testing.T) {
+		seen := walk(t, vol)
+
+		// Make sure we don't append an extraneous slash to the root ("C:\" => "C:\\a").
+		for path := range seen {
+			rest := strings.TrimPrefix(path, vol)
+			if strings.Contains(rest, `\\`) {
+				t.Errorf(`path contains multiple consecutive slashes after volume (%s): "%s"`,
+					vol, path)
+			}
+			if path == vol {
+				continue // Clean("C:") => "C:."
+			}
+			if s := filepath.Clean(path); s != path {
+				t.Errorf(`filepath.Clean("%s") == "%s"`, path, s)
+			}
+		}
+
+		// Make sure we walk the current directory.
+		for path, de := range seen {
+			if path == vol {
+				// Ignore the volume since filepath.Base("C:") == "\" and "C:" and "\"
+				// are not equivalent.
+				continue
+			}
+			fi1, err := de.Info()
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := filepath.Base(path)
+			fi2, err := os.Lstat(name)
+			if err != nil {
+				// NB: This test will fail if this file is removed while it's
+				// running. There are workarounds for this, but for now it's
+				// simpler to just error if that happens.
+				t.Fatal(err)
+			}
+			if !os.SameFile(fi1, fi2) {
+				t.Errorf("Expected files (%s) and (%s) to be the same", path, name)
+			}
+		}
+	})
 }
 
 func TestFastWalk_Symlink(t *testing.T) {

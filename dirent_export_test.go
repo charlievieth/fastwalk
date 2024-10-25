@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -29,26 +30,44 @@ func FormatFileInfo(fi fs.FileInfo) string {
 	})
 }
 
+// NB: this test lives here and not in fastwalk_test.go since we need to
+// access the internal cleanRootPath function.
 func TestCleanRootPath(t *testing.T) {
-	tests := map[string]string{
-		"":      "",
-		"/":     "/",
-		"//":    "/",
-		"/foo":  "/foo",
-		"/foo/": "/foo",
-		"a":     "a",
-		`C:/`:   `C:`,
-	}
-	if os.PathSeparator != '/' {
-		const sep = string(os.PathSeparator)
-		tests["C:"+sep] = `C:`
-		tests["C:"+sep+sep] = `C:`
-		tests[sep+sep] = sep
-	}
-	for in, want := range tests {
-		got := cleanRootPath(in)
-		if got != want {
-			t.Errorf("cleanRootPath(%q) = %q; want: %q", in, got, want)
+	test := func(t *testing.T, tests map[string]string) {
+		t.Helper()
+		for in, want := range tests {
+			got := cleanRootPath(in)
+			if got != want {
+				t.Errorf("cleanRootPath(%q) = %q; want: %q", in, got, want)
+			}
 		}
 	}
+	// NB: The name here isn't exactly correct since we run this for
+	// any non-Windows OS.
+	t.Run("Unix", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test not supported on Windows")
+		}
+		test(t, map[string]string{
+			"":      "",
+			".":     ".",
+			"/":     "/",
+			"//":    "/",
+			"/foo":  "/foo",
+			"/foo/": "/foo",
+			"a":     "a",
+		})
+	})
+	// Test that cleanRootPath is a no-op on Windows
+	t.Run("Windows", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("test only supported on Windows")
+		}
+		test(t, map[string]string{
+			`C:/`:              `C:/`,
+			`C://`:             `C://`,
+			`\\?\GLOBALROOT`:   `\\?\GLOBALROOT`,
+			`\\?\GLOBALROOT\\`: `\\?\GLOBALROOT\\`,
+		})
+	})
 }
