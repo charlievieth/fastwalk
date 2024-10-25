@@ -1132,7 +1132,7 @@ func TestFastWalk_SortMode(t *testing.T) {
 			// only one directory, but use it for correctness.
 			var mu sync.Mutex
 			var got []string
-			fastwalk.Walk(&conf, tmp, func(path string, d fs.DirEntry, err error) error {
+			err := fastwalk.Walk(&conf, tmp, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return err
 				}
@@ -1144,6 +1144,9 @@ func TestFastWalk_SortMode(t *testing.T) {
 				}
 				return nil
 			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("Invalid output\ngot:  %q\nwant: %q", got, want)
 			}
