@@ -20,7 +20,7 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
       - name: Test
-        run: make test
+        run: go test -coverprofile=coverage.txt -race ./...
       - name: Test Builds
         run: make test_build --jobs=4
       - name: Upload coverage reports to Codecov
