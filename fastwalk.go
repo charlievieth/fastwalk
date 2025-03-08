@@ -66,9 +66,9 @@ var SkipDir = fs.SkipDir
 
 // DefaultNumWorkers returns the default number of worker goroutines to use in
 // [Walk] and is the value of [runtime.GOMAXPROCS](-1) clamped to a range
-// of 4 to 32 except on Darwin where it is either 4 (8 cores or less) or 6
-// (more than 8 cores). This is because Walk / IO performance on Darwin
-// degrades with more concurrency.
+// of 4 to 32 except on Darwin where it is either 4 (8 cores or less), 6
+// (10 cores or less), or 10 (more than 10 cores). This is because Walk / IO
+// performance on Darwin degrades with more concurrency.
 //
 // The optimal number for your workload may be lower or higher. The results
 // of BenchmarkFastWalkNumWorkers benchmark may be informative.
@@ -77,14 +77,26 @@ func DefaultNumWorkers() int {
 	if numCPU < 4 {
 		return 4
 	}
-	// Darwin IO performance on APFS slows with more workers.
-	// Stat performance is best around 2-4 and file IO is best
-	// around 4-6. More workers only benefit CPU intensive tasks.
+	// Darwin IO performance on APFS can slow with increased parallelism.
+	// Depending on CPU, stat(2) performance is best around 4-10 workers
+	// and file IO is best around 4 workers. More workers only benefit CPU
+	// intensive tasks.
+	//
+	// NB(Charlie): As of macOS 15, the parallel performance of readdir_r(3)
+	// and stat(2) calls has improved and is now generally the number of
+	// performance cores (on ARM Macs).
+	//
+	// TODO: Consider using the value of sysctl("hw.perflevel0.physicalcpu").
+	// TODO: Find someone with a Mac Studio to test higher core counts.
 	if runtime.GOOS == "darwin" {
-		if numCPU <= 8 {
+		switch {
+		case numCPU <= 8:
 			return 4
+		case numCPU <= 10:
+			return 6
+		default: // numCPU > 10
+			return 10
 		}
-		return 6
 	}
 	if numCPU > 32 {
 		return 32
