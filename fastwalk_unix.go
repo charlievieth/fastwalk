@@ -20,7 +20,7 @@ const blockSize = 8192
 // value used to represent a syscall.DT_UNKNOWN Dirent.Type.
 const unknownFileMode os.FileMode = ^os.FileMode(0)
 
-func (w *walker) readDir(dirName string) error {
+func (w *walker) readDir(dirName string, depth int) error {
 	fd, err := open(dirName, 0, 0)
 	if err != nil {
 		return &os.PathError{Op: "open", Path: dirName, Err: err}
@@ -72,7 +72,7 @@ func (w *walker) readDir(dirName string) error {
 		if skipFiles && typ.IsRegular() {
 			continue
 		}
-		de := newUnixDirent(dirName, name, typ)
+		de := newUnixDirent(dirName, name, typ, depth)
 		if w.sortMode == SortNone {
 			if err := w.onDirEnt(dirName, name, de); err != nil {
 				if err == ErrSkipFiles {

@@ -2,15 +2,13 @@
 
 package fastwalk
 
-import (
-	"os"
-)
+import "os"
 
 // readDir calls fn for each directory entry in dirName.
 // It does not descend into directories or follow symlinks.
 // If fn returns a non-nil error, readDir returns with that error
 // immediately.
-func (w *walker) readDir(dirName string) error {
+func (w *walker) readDir(dirName string, depth int) error {
 	f, err := os.Open(dirName)
 	if err != nil {
 		return err
@@ -33,7 +31,7 @@ func (w *walker) readDir(dirName string) error {
 			continue
 		}
 		// Need to use FileMode.Type().Type() for fs.DirEntry
-		e := newDirEntry(dirName, d)
+		e := newDirEntry(dirName, d, depth)
 		if w.sortMode == SortNone {
 			if err := w.onDirEnt(dirName, d.Name(), e); err != nil {
 				if err != ErrSkipFiles {

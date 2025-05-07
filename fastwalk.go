@@ -330,6 +330,9 @@ type DirEntry interface {
 	// If the entry denotes a symbolic link, Stat reports the information
 	// about the target itself, not the link.
 	Stat() (fs.FileInfo, error)
+
+	// Depth returns the depth at which this entry was generated relative to the root.
+	Depth() int
 }
 
 // Walk is a faster implementation of [filepath.WalkDir] that walks the file
@@ -379,6 +382,11 @@ type DirEntry interface {
 //     a Stat() method that returns the result of calling [os.Stat] on the
 //     file. The result of Stat() and Info() are cached. The [StatDirEntry]
 //     helper can be used to call Stat() on the returned [fastwalk.DirEntry].
+//
+//   - Additionally, the [fs.DirEntry] argument (which has type [fastwalk.DirEntry]),
+//     has a Depth() method that returns the depth at which the entry was generated
+//     relative to the root being walked. The [DirEntryDepth] helper function
+//     can be used to call Depth() on the [fs.DirEntry] argument.
 //
 //   - Walk can follow symlinks in two ways: the fist, and simplest, is to
 //     set Follow [Config] option to true - this will cause Walk to follow
@@ -631,7 +639,7 @@ func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
 		}
 	}
 
-	err := w.readDir(root)
+	err := w.readDir(root, info.Depth()+1)
 	if err != nil {
 		// Second call, to report ReadDir error.
 		return w.fn(root, info, err)
