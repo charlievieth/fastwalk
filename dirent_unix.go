@@ -15,6 +15,7 @@ type unixDirent struct {
 	parent string
 	name   string
 	typ    fs.FileMode
+	depth  uint32 // uint32 so that we can pack it next to typ
 	info   *fileInfo
 	stat   *fileInfo
 }
@@ -22,6 +23,7 @@ type unixDirent struct {
 func (d *unixDirent) Name() string      { return d.name }
 func (d *unixDirent) IsDir() bool       { return d.typ.IsDir() }
 func (d *unixDirent) Type() fs.FileMode { return d.typ }
+func (d *unixDirent) Depth() int        { return int(d.depth) }
 func (d *unixDirent) String() string    { return fmtdirent.FormatDirEntry(d) }
 
 func (d *unixDirent) Info() (fs.FileInfo, error) {
@@ -43,11 +45,12 @@ func (d *unixDirent) Stat() (fs.FileInfo, error) {
 	return stat.FileInfo, stat.err
 }
 
-func newUnixDirent(parent, name string, typ fs.FileMode) *unixDirent {
+func newUnixDirent(parent, name string, typ fs.FileMode, depth int) *unixDirent {
 	return &unixDirent{
 		parent: parent,
 		name:   name,
 		typ:    typ,
+		depth:  uint32(depth),
 	}
 }
 

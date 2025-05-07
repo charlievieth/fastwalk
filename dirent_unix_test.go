@@ -87,11 +87,11 @@ func TestUnixDirent(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Run("Stat", func(t *testing.T) {
-			ent := newUnixDirent(tempdir, filepath.Base(fileName), fileInfo.Mode().Type())
+			ent := newUnixDirent(tempdir, filepath.Base(fileName), fileInfo.Mode().Type(), 0)
 			testUnixDirentParallel(t, ent, fileInfo, (*unixDirent).Stat)
 		})
 		t.Run("Info", func(t *testing.T) {
-			ent := newUnixDirent(tempdir, filepath.Base(fileName), fileInfo.Mode().Type())
+			ent := newUnixDirent(tempdir, filepath.Base(fileName), fileInfo.Mode().Type(), 0)
 			testUnixDirentParallel(t, ent, fileInfo, (*unixDirent).Info)
 		})
 	})
@@ -110,11 +110,11 @@ func TestUnixDirent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ent := newUnixDirent(tempdir, filepath.Base(linkName), fileInfo.Mode().Type())
+			ent := newUnixDirent(tempdir, filepath.Base(linkName), fileInfo.Mode().Type(), 0)
 			testUnixDirentParallel(t, ent, want, (*unixDirent).Stat)
 		})
 		t.Run("Info", func(t *testing.T) {
-			ent := newUnixDirent(tempdir, filepath.Base(linkName), fileInfo.Mode().Type())
+			ent := newUnixDirent(tempdir, filepath.Base(linkName), fileInfo.Mode().Type(), 0)
 			testUnixDirentParallel(t, ent, fileInfo, (*unixDirent).Info)
 		})
 	})
@@ -232,7 +232,7 @@ func BenchmarkUnixDirentLoadFileInfo(b *testing.B) {
 		b.Fatal(err)
 	}
 	parent, name := filepath.Split(wd)
-	d := newUnixDirent(parent, name, fi.Mode().Type())
+	d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
 
 	for i := 0; i < b.N; i++ {
 		loadFileInfo(&d.info)
@@ -250,7 +250,7 @@ func BenchmarkUnixDirentInfo(b *testing.B) {
 		b.Fatal(err)
 	}
 	parent, name := filepath.Split(wd)
-	d := newUnixDirent(parent, name, fi.Mode().Type())
+	d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
 
 	for i := 0; i < b.N; i++ {
 		fi, err := d.Info()
@@ -273,7 +273,7 @@ func BenchmarkUnixDirentStat(b *testing.B) {
 		b.Fatal(err)
 	}
 	parent, name := filepath.Split(wd)
-	d := newUnixDirent(parent, name, fi.Mode().Type())
+	d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
 
 	for i := 0; i < b.N; i++ {
 		fi, err := d.Stat()

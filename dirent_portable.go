@@ -20,10 +20,15 @@ type portableDirent struct {
 	fs.DirEntry
 	parent string
 	stat   *fileInfo
+	depth  uint32
 }
 
 func (d *portableDirent) String() string {
 	return fmtdirent.FormatDirEntry(d)
+}
+
+func (d *portableDirent) Depth() int {
+	return int(d.depth)
 }
 
 func (d *portableDirent) Stat() (fs.FileInfo, error) {
@@ -37,15 +42,16 @@ func (d *portableDirent) Stat() (fs.FileInfo, error) {
 	return stat.FileInfo, stat.err
 }
 
-func newDirEntry(dirName string, info fs.DirEntry) DirEntry {
+func newDirEntry(dirName string, info fs.DirEntry, depth int) DirEntry {
 	return &portableDirent{
 		DirEntry: info,
 		parent:   dirName,
+		depth:    uint32(depth),
 	}
 }
 
 func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
-	return newDirEntry(dirname, fs.FileInfoToDirEntry(fi))
+	return newDirEntry(dirname, fs.FileInfoToDirEntry(fi), 0)
 }
 
 var direntSlicePool = sync.Pool{

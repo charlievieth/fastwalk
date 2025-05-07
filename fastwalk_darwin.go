@@ -8,7 +8,7 @@ import (
 	"unsafe"
 )
 
-func (w *walker) readDir(dirName string) (err error) {
+func (w *walker) readDir(dirName string, depth int) (err error) {
 	var fd uintptr
 	for {
 		fd, err = opendir(dirName)
@@ -68,7 +68,7 @@ func (w *walker) readDir(dirName string) (err error) {
 			continue
 		}
 		nm := string(name)
-		de := newUnixDirent(dirName, nm, typ)
+		de := newUnixDirent(dirName, nm, typ, depth)
 		if w.sortMode == SortNone {
 			if err := w.onDirEnt(dirName, nm, de); err != nil {
 				if err != ErrSkipFiles {

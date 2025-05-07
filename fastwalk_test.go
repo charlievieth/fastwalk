@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1171,6 +1172,37 @@ func TestSortModeString(t *testing.T) {
 		if got != test.want {
 			t.Errorf("%d: got: %s want: %s", test.mode, got, test.want)
 		}
+	}
+}
+
+func TestFastWalk_Depth(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "root0")
+	for _, r := range "abcdef" {
+		path := fmt.Sprintf("%[1]s/%[2]s1/%[2]s2/%[2]s3/%[2]s4.txt", tmp, string(r))
+		if err := writeFile(path, "", 0666); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	re := regexp.MustCompile(`(\d+)`)
+
+	err := fastwalk.Walk(nil, tmp, func(path string, typ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		a := re.FindAllString(typ.Name(), -1)
+		want, err := strconv.Atoi(a[len(a)-1])
+		if err != nil {
+			return err
+		}
+		depth := fastwalk.DirEntryDepth(typ)
+		if depth != want {
+			t.Errorf("%s: got depth: %d want: %d", path, depth, want)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

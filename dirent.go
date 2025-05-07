@@ -53,3 +53,21 @@ func StatDirEntry(path string, de fs.DirEntry) (fs.FileInfo, error) {
 	}
 	return os.Stat(path)
 }
+
+// DirEntryDepth returns the depth at which entry de was generated relative
+// to the root being walked or -1 if de does not have type [fastwalk.DirEntry].
+//
+// This is a helper function that saves the user from having to cast the
+// [fs.DirEntry] argument to their walk function to a [fastwalk.DirEntry]
+// and is equivalent to the below code:
+//
+//	if d, _ := de.(DirEntry); d != nil {
+//		return d.Depth()
+//	}
+//	return -1
+func DirEntryDepth(de fs.DirEntry) int {
+	if d, _ := de.(DirEntry); d != nil {
+		return d.Depth()
+	}
+	return -1
+}

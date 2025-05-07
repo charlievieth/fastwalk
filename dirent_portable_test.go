@@ -23,6 +23,7 @@ type dirEntry struct {
 func (de dirEntry) Name() string               { return de.name }
 func (de dirEntry) IsDir() bool                { return de.typ.IsDir() }
 func (de dirEntry) Type() fs.FileMode          { return de.typ.Type() }
+func (de dirEntry) Depth() int                 { panic("not implemented") }
 func (de dirEntry) Info() (fs.FileInfo, error) { panic("not implemented") }
 func (de dirEntry) Stat() (fs.FileInfo, error) { panic("not implemented") }
 
