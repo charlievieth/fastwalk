@@ -259,6 +259,7 @@ var DefaultConfig = Config{
 	ToSlash:    DefaultToSlash(),
 	NumWorkers: DefaultNumWorkers(),
 	Sort:       SortNone,
+	MaxDepth:   0,
 }
 
 // A Config controls the behavior of [Walk].
@@ -304,6 +305,11 @@ type Config struct {
 	// Number of parallel workers to use. If NumWorkers if ≤ 0 then
 	// DefaultNumWorkers is used.
 	NumWorkers int
+
+	// MaxDepth limits the depth of directory traversal to MaxDepth levels
+	// beyond the root directory being walked. By default, there is no limit
+	// on the search depth and a value of zero or less disables this feature.
+	MaxDepth int
 }
 
 // Copy returns a copy of c. If c is nil an empty [Config] is returned.
@@ -331,7 +337,8 @@ type DirEntry interface {
 	// about the target itself, not the link.
 	Stat() (fs.FileInfo, error)
 
-	// Depth returns the depth at which this entry was generated relative to the root.
+	// Depth returns the depth at which this entry was generated relative to the
+	// root being walked.
 	Depth() int
 }
 
@@ -439,6 +446,7 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		resc: make(chan error, numWorkers),
 
 		// TODO: we should just pass the Config
+		maxDepth: conf.MaxDepth,
 		follow:   conf.Follow,
 		toSlash:  conf.ToSlash,
 		sortMode: conf.Sort,
@@ -525,6 +533,7 @@ type walker struct {
 	resc     chan error    // from workers
 
 	ignoredDirs []fs.FileInfo
+	maxDepth    int
 	follow      bool
 	toSlash     bool
 	sortMode    SortMode
@@ -639,7 +648,11 @@ func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
 		}
 	}
 
-	err := w.readDir(root, info.Depth()+1)
+	depth := info.Depth()
+	if w.maxDepth > 0 && depth >= w.maxDepth {
+		return nil
+	}
+	err := w.readDir(root, depth+1)
 	if err != nil {
 		// Second call, to report ReadDir error.
 		return w.fn(root, info, err)

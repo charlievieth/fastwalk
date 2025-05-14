@@ -1206,6 +1206,76 @@ func TestFastWalk_Depth(t *testing.T) {
 	}
 }
 
+// Test Config.MaxDepth
+func TestFastWalk_DepthSymlink(t *testing.T) {
+	files := map[string]string{
+		"d1/d2/f3.txt": "one",
+		"symdir1":      "LINK:d1",
+		"symdir2":      "LINK:d1/d2",
+	}
+
+	t.Run("Default", func(t *testing.T) {
+		conf := fastwalk.Config{
+			Follow:   false,
+			MaxDepth: 3,
+		}
+		fn := func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			return nil
+		}
+		testFastWalkConf(t, &conf, files, fn, map[string]os.FileMode{
+			"":             os.ModeDir,
+			"/src":         os.ModeDir,
+			"/src/d1":      os.ModeDir,
+			"/src/d1/d2":   os.ModeDir,
+			"/src/symdir1": os.ModeSymlink,
+			"/src/symdir2": os.ModeSymlink,
+		})
+	})
+
+	want := map[string]os.FileMode{
+		"":                    os.ModeDir,
+		"/src":                os.ModeDir,
+		"/src/d1":             os.ModeDir,
+		"/src/d1/d2":          os.ModeDir,
+		"/src/symdir1":        os.ModeSymlink,
+		"/src/symdir1/d2":     os.ModeDir,
+		"/src/symdir2":        os.ModeSymlink,
+		"/src/symdir2/f3.txt": 0,
+	}
+
+	t.Run("Follow", func(t *testing.T) {
+		conf := fastwalk.Config{
+			Follow:   true,
+			MaxDepth: 3,
+		}
+		fn := func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			return nil
+		}
+		testFastWalkConf(t, &conf, files, fn, want)
+	})
+
+	// The behavior should be the same whether we use Config.Follow or
+	// manually walk symlinks with ErrTraverseLink.
+	t.Run("ErrTraverseLink", func(t *testing.T) {
+		conf := fastwalk.Config{
+			Follow:   false,
+			MaxDepth: 3,
+		}
+		fn := func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			if de.Type()&fs.ModeSymlink != 0 {
+				if fi, err := fastwalk.StatDirEntry(path, de); err == nil && fi.IsDir() {
+					return fastwalk.ErrTraverseLink
+				}
+			}
+			return nil
+		}
+		testFastWalkConf(t, &conf, files, fn, want)
+	})
+}
+
 func TestConfigCopy(t *testing.T) {
 	t.Run("Nil", func(t *testing.T) {
 		c := (*fastwalk.Config)(nil).Copy()
