@@ -135,6 +135,9 @@ func testFastWalkConf(t *testing.T, conf *fastwalk.Config, files map[string]stri
 		}
 		mu.Lock()
 		defer mu.Unlock()
+		// Normalize paths for Windows
+		path = filepath.FromSlash(path)
+		tempdir = filepath.FromSlash(tempdir)
 		if !strings.HasPrefix(path, tempdir) {
 			t.Errorf("bogus prefix on %q, expect %q", path, tempdir)
 		}
@@ -456,6 +459,9 @@ func TestFastWalk_WindowsRootPaths(t *testing.T) {
 	//
 	// https://github.com/charlievieth/fastwalk/issues/37
 	t.Run("FullyQualified", func(t *testing.T) {
+		if _, ok := os.LookupEnv("MSYSTEM"); ok {
+			t.Skip("test not supported when running under MSYS (or Git Bash)")
+		}
 		root := vol + `\`
 		if sameFile(t, pwd, root) {
 			t.Skipf("the current working directory (%s) is the disk root: %s", pwd, root)
@@ -560,7 +566,7 @@ func TestFastWalk_WindowsRootPaths(t *testing.T) {
 			if path == vol {
 				continue // Clean("C:") => "C:."
 			}
-			if s := filepath.Clean(path); s != path {
+			if s := filepath.Clean(path); s != filepath.FromSlash(path) {
 				t.Errorf(`filepath.Clean("%s") == "%s"`, path, s)
 			}
 		}
