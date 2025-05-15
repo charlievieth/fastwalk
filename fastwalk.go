@@ -60,9 +60,10 @@ var ErrSkipFiles = errors.New("fastwalk: skip remaining files in directory")
 // as an error by any function.
 var SkipDir = fs.SkipDir
 
-// TODO(charlie): Look into implementing the fs.SkipAll behavior of
-// filepath.Walk and filepath.WalkDir. This may not be possible without taking
-// a performance hit.
+// SkipAll is used as a return value from [WalkDirFunc] to indicate that
+// all remaining files and directories are to be skipped. It is not returned
+// as an error by any function.
+var SkipAll = fs.SkipAll
 
 // DefaultNumWorkers returns the default number of worker goroutines to use in
 // [Walk] and is the value of [runtime.GOMAXPROCS](-1) clamped to a range
@@ -608,13 +609,18 @@ func (w *walker) joinPaths(dir, base string) string {
 
 func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
 	joined := w.joinPaths(dirName, baseName)
+	err := w.fn(joined, de, nil)
 	typ := de.Type()
 	if typ == os.ModeDir {
-		w.enqueue(walkItem{dir: joined, info: de})
+		if err != nil {
+			if err == SkipDir {
+				return nil
+			}
+			return err // May be SkipAll
+		}
+		w.enqueue(walkItem{dir: joined, info: de, callbackDone: true})
 		return nil
 	}
-
-	err := w.fn(joined, de, nil)
 	if typ == os.ModeSymlink {
 		if err == ErrTraverseLink {
 			if !w.follow {
@@ -625,8 +631,8 @@ func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
 			}
 			err = nil // Ignore ErrTraverseLink when Follow is true.
 		}
-		if err == filepath.SkipDir {
-			// Permit SkipDir on symlinks too.
+		if err == SkipDir {
+			// Permit SkipDir and SkipAll on symlinks too.
 			return nil
 		}
 		if err == nil && w.follow && w.shouldTraverse(joined, de) {
@@ -640,10 +646,10 @@ func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
 func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
 	if runUserCallback {
 		err := w.fn(root, info, nil)
-		if err == filepath.SkipDir {
-			return nil
-		}
 		if err != nil {
+			if err == SkipDir || err == SkipAll {
+				return nil
+			}
 			return err
 		}
 	}
