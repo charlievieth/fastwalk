@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -86,6 +87,15 @@ func cleanupOrLogTempDir(t *testing.T, tempdir string) {
 	} else {
 		os.RemoveAll(tempdir)
 	}
+}
+
+func checkRoot() bool {
+	test_user, err := user.Current()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	return test_user.Username == "root"
 }
 
 func testCreateFiles(t *testing.T, tempdir string, files map[string]string) {
@@ -989,6 +999,9 @@ func TestFastWalk_ErrNotExist(t *testing.T) {
 }
 
 func TestFastWalk_ErrPermission(t *testing.T) {
+	if checkRoot() {
+		t.Skip("Skip test as root user")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("test not supported for Windows")
 	}
