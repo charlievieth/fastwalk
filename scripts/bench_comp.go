@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -17,13 +16,8 @@ func init() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 
-var Tests = []string{
-	"filepath",
-	"fastwalk",
-}
-
 func main() {
-	count := flag.Int("count", 5, "Run each test and benchmark n times")
+	count := flag.Int("count", 10, "Run each test and benchmark n times")
 	compCmd := flag.String("comp", "benchstat", "Benchmark comparison command")
 	flag.Parse()
 
@@ -31,7 +25,7 @@ func main() {
 		log.Fatalf("error: %v: %q\n", err, *compCmd)
 	}
 
-	tmpdir, err := ioutil.TempDir("", "fastwalk-bench.*")
+	tmpdir, err := os.MkdirTemp("", "fastwalk-bench.*")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,7 +33,7 @@ func main() {
 	runTest := func(name string) error {
 		fmt.Println("##", name)
 
-		filename := filepath.Join(tmpdir, name+".txt")
+		filename := filepath.Join(tmpdir, name)
 		f, err := os.Create(filename)
 		if err != nil {
 			log.Fatal(err)
@@ -52,7 +46,6 @@ func main() {
 			"-bench", `^BenchmarkWalkComparison$`,
 			"-benchmem",
 			"-count", strconv.Itoa(*count),
-			"github.com/charlievieth/fastwalk",
 			"-walkfunc", name,
 		}
 
@@ -72,18 +65,15 @@ func main() {
 		return nil
 	}
 
-	for _, name := range Tests {
-		runTest(name)
-	}
+	runTest("filepath")
+	runTest("fastwalk")
 
 	benchStat := func(from, to string) {
 		fmt.Printf("## %s vs. %s\n", from, to)
-		cmd := exec.Command(*compCmd,
-			filepath.Join(tmpdir, from+".txt"),
-			filepath.Join(tmpdir, to+".txt"),
-		)
+		cmd := exec.Command(*compCmd, from, to)
 		cmd.Stderr = os.Stderr
 		cmd.Stdout = os.Stdout
+		cmd.Dir = tmpdir
 		if err := cmd.Run(); err != nil {
 			log.Fatalf("error running command: %q: %v\n", cmd.Args, err)
 		}
@@ -94,7 +84,6 @@ func main() {
 	fmt.Println("########################################################")
 	fmt.Print("\n")
 	benchStat("filepath", "fastwalk")
-	benchStat("godirwalk", "fastwalk")
 
 	fmt.Printf("Temp: %s\n", tmpdir)
 }
