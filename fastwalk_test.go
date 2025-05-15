@@ -220,7 +220,8 @@ func maxFileNameLength(t testing.TB) int {
 // This test identified a "checkptr: converted pointer straddles multiple allocations"
 // error on darwin when getdirentries64 was used with the race-detector enabled.
 func TestFastWalk_LongFileName(t *testing.T) {
-	// Test is slow since we need to find the longest allowed filename
+	// Test is slow since we create a large number of files with
+	// names that are between 1..NAME_MAX bytes long.
 	t.Parallel()
 
 	maxNameLen := maxFileNameLength(t)
