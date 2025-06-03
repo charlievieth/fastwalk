@@ -1,5 +1,5 @@
 .PHONY: all
-all: test test_build
+all: test
 
 .PHONY: test_build_darwin_arm64
 test_build_darwin_arm64:
