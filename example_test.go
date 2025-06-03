@@ -42,6 +42,47 @@ func CreateFiles(files map[string]string) (root string, cleanup func()) {
 	return filepath.Join(tempdir, "src") + "/", func() { os.RemoveAll(tempdir) }
 }
 
+func CreateFilesNew(files ...string) (root string, cleanup func()) {
+	tempdir, err := os.MkdirTemp("", "fastwalk-example-*")
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		if recover() != nil {
+			os.RemoveAll(tempdir)
+		}
+	}()
+	root = filepath.Join(tempdir, "src")
+
+	for _, path := range files {
+		if strings.Contains(path, "->") {
+			continue
+		}
+		file := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(file, []byte("data"), 0644); err != nil {
+			panic(err)
+		}
+	}
+
+	// Create symlinks after all other files. Otherwise, directory symlinks on
+	// Windows are unusable (see https://golang.org/issue/39183).
+	for _, path := range files {
+		newname, oldname, ok := strings.Cut(path, " -> ")
+		if !ok {
+			continue
+		}
+		newname = filepath.Join(root, newname)
+		if err := os.Symlink(oldname, newname); err != nil {
+			panic(err)
+		}
+	}
+
+	return root, func() { os.RemoveAll(tempdir) }
+}
+
 func PrettyPrintEntry(root, path string, de fs.DirEntry) {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
@@ -67,14 +108,22 @@ func PrettyPrintEntry(root, path string, de fs.DirEntry) {
 // but we do not follow/traverse it.
 func ExampleWalk_follow() {
 	// Setup
-	root, cleanup := CreateFiles(map[string]string{
-		"bar/bar.go":  "one",
-		"bar/symlink": "LINK:bar.go",
-		"foo/foo.go":  "two",
-		"foo/symdir":  "LINK:../bar/",
-		"foo/broken":  "LINK:nope.txt", // Broken symlink
-		"foo/foo":     "LINK:../foo/",  // Symlink loop
-	})
+	// root, cleanup := CreateFiles(map[string]string{
+	// 	"bar/bar.go":  "one",
+	// 	"bar/symlink": "LINK:bar.go",
+	// 	"foo/foo.go":  "two",
+	// 	"foo/symdir":  "LINK:../bar/",
+	// 	"foo/broken":  "LINK:nope.txt", // Broken symlink
+	// 	"foo/foo":     "LINK:../foo/",  // Symlink loop
+	// })
+	root, cleanup := CreateFilesNew(
+		"bar/bar.go",
+		"bar/symlink -> bar.go",
+		"foo/foo.go",
+		"foo/symdir -> ../bar/",
+		"foo/broken -> nope.txt", // Broken symlink
+		"foo/foo -> ../foo/",     // Symlink loop
+	)
 	defer cleanup()
 
 	conf := fastwalk.Config{
@@ -105,14 +154,22 @@ func ExampleWalk_follow() {
 }
 
 func ExampleWalk() {
-	root, cleanup := CreateFiles(map[string]string{
-		"bar/b.txt": "",
-		"foo/f.txt": "",
+	// root, cleanup := CreateFiles(map[string]string{
+	// 	"bar/b.txt": "",
+	// 	"foo/f.txt": "",
+	// 	// Since Config.Follow is set to false, the symbolic link "link" will
+	// 	// be visited, but we will not traverse into it (since our walk func
+	// 	// does not return [fastwalk.ErrTraverseLink]).
+	// 	"link": "LINK:bar",
+	// })
+	root, cleanup := CreateFilesNew(
+		"bar/b.txt",
+		"foo/f.txt",
 		// Since Config.Follow is set to false, the symbolic link "link" will
 		// be visited, but we will not traverse into it (since our walk func
 		// does not return [fastwalk.ErrTraverseLink]).
-		"link": "LINK:bar",
-	})
+		"link -> bar",
+	)
 	defer cleanup()
 
 	err := fastwalk.Walk(nil, root, func(path string, de fs.DirEntry, err error) error {
@@ -176,3 +233,44 @@ func ExampleWalk_traverseLink() {
 	// ----------: foo/f.txt
 	// ----------: link/b.txt
 }
+
+// func ExampleIgnorePermissionErrors() {
+// 	return
+// 	if runtime.GOOS == "windows" {
+// 		panic("test not supported for Windows")
+// 	}
+// 	root, cleanup := CreateFiles(map[string]string{
+// 		"foo/foo.go": "one",
+// 		"bar/bar.go": "two",
+// 	})
+// 	defer cleanup()
+//
+// 	if err := os.Chmod(filepath.Join(root, "foo"), 0355); err != nil {
+// 		panic(err)
+// 	}
+// 	walkFn := func(path string, de fs.DirEntry, err error) error {
+// 		rel, _ := filepath.Rel(root, path)
+// 		if err != nil {
+// 			fmt.Printf("%s: %v\n", rel, strings.ReplaceAll(err.Error(), root, ""))
+// 			return err
+// 		}
+// 		fmt.Println(rel)
+// 		return nil
+// 	}
+// 	conf := fastwalk.Config{
+// 		Sort:       fastwalk.SortDirsFirst,
+// 		NumWorkers: 1,
+// 	}
+// 	if err := fastwalk.Walk(&conf, root, walkFn); err != nil {
+// 		// fmt.Printf("Error: %#v\n", err)
+// 		fmt.Printf("Error: %#v\n", strings.ReplaceAll(err.Error(), root, ""))
+// 	}
+//
+// 	fmt.Println("################")
+// 	if err := fastwalk.Walk(&conf, root, fastwalk.IgnorePermissionErrors(walkFn)); err != nil {
+// 		fmt.Println("Error:", err)
+// 	}
+//
+// 	// Output:
+// 	// a
+// }
