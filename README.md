@@ -2,6 +2,7 @@
 [![Test fastwalk on macOS](https://github.com/charlievieth/fastwalk/actions/workflows/macos.yml/badge.svg)](https://github.com/charlievieth/fastwalk/actions/workflows/macos.yml)
 [![Test fastwalk on Linux](https://github.com/charlievieth/fastwalk/actions/workflows/linux.yml/badge.svg)](https://github.com/charlievieth/fastwalk/actions/workflows/linux.yml)
 [![Test fastwalk on Windows](https://github.com/charlievieth/fastwalk/actions/workflows/windows.yml/badge.svg)](https://github.com/charlievieth/fastwalk/actions/workflows/windows.yml)
+[![codecov](https://codecov.io/gh/charlievieth/fastwalk/graph/badge.svg?token=UM8Y01K14K)](https://codecov.io/gh/charlievieth/fastwalk)
 
 # fastwalk
 
