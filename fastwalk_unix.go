@@ -75,6 +75,9 @@ func (w *walker) readDir(dirName string, depth int) error {
 		de := newUnixDirent(dirName, name, typ, depth)
 		if w.sortMode == SortNone {
 			if err := w.onDirEnt(dirName, name, de); err != nil {
+				if err == SkipAll {
+					return nil
+				}
 				if err == ErrSkipFiles {
 					skipFiles = true
 					continue
@@ -97,6 +100,9 @@ func (w *walker) readDir(dirName string, depth int) error {
 			continue
 		}
 		if err := w.onDirEnt(dirName, d.Name(), d); err != nil {
+			if err == SkipAll {
+				return nil
+			}
 			if err != ErrSkipFiles {
 				return err
 			}
