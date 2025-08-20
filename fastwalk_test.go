@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -989,6 +990,9 @@ func TestFastWalk_ErrNotExist(t *testing.T) {
 }
 
 func TestFastWalk_ErrPermission(t *testing.T) {
+	if u, err := user.Current(); err == nil && u.Uid == "0" {
+		t.Skip("Skip test as root user")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("test not supported for Windows")
 	}
