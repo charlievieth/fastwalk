@@ -3,6 +3,7 @@
 package dirent
 
 import (
+	"encoding/binary"
 	"os"
 	"runtime"
 	"syscall"
@@ -10,6 +11,30 @@ import (
 )
 
 const InvalidMode = os.FileMode(1<<32 - 1)
+
+// readInt returns the size-bytes unsigned integer in native byte order at offset off.
+func readInt(b []byte, off, size uintptr) (uint64, bool) {
+	if len(b) < int(off+size) {
+		return 0, false
+	}
+	b = b[off:]
+	switch size {
+	case 1:
+		return uint64(b[0]), true
+	case 2:
+		return uint64(binary.NativeEndian.Uint16(b)), true
+	case 4:
+		return uint64(binary.NativeEndian.Uint32(b)), true
+	case 8:
+		return uint64(binary.NativeEndian.Uint64(b)), true
+	default:
+		// This case is impossible if the tests pass. Previously, we panicked
+		// here but for performance reasons (escape analysis) it's better to
+		// trigger a panic via an out-of-bounds reference.
+		_ = b[len(b)]
+		return 0, false
+	}
+}
 
 func Parse(buf []byte) (consumed int, name string, typ os.FileMode) {
 
