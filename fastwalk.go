@@ -250,16 +250,17 @@ func (s SortMode) String() string {
 	if 0 <= int(s) && int(s) < len(sortModeStrs) {
 		return sortModeStrs[s]
 	}
-	return "SortMode(" + itoa(uint64(s)) + ")"
+	return "SortMode(" + uitoa(uint64(s)) + ")"
 }
 
 // DefaultConfig is the default [Config] used when none is supplied.
 var DefaultConfig = Config{
-	Follow:     false,
-	ToSlash:    DefaultToSlash(),
-	NumWorkers: DefaultNumWorkers(),
-	Sort:       SortNone,
-	MaxDepth:   0,
+	Follow:             false,
+	ToSlash:            DefaultToSlash(),
+	NumWorkers:         DefaultNumWorkers(),
+	Sort:               SortNone,
+	MaxDepth:           0,
+	ConcurrencyControl: nil,
 }
 
 // A Config controls the behavior of [Walk].
@@ -310,7 +311,26 @@ type Config struct {
 	// beyond the root directory being walked. By default, there is no limit
 	// on the search depth and a value of zero or less disables this feature.
 	MaxDepth int
+
+	// ConcurrencyControl allows the concurrency of file operations to be
+	// controlled globally. This is useful when [fastwalk.Walk] is invoked
+	// concurrently and allows for more fine-grained control than NumWorkers.
+	ConcurrencyControl *ConcurrencyControl
 }
+
+type ConcurrencyControl struct {
+	sema chan struct{}
+}
+
+func NewConcurrencyControl(maxInFlight int) *ConcurrencyControl {
+	if maxInFlight <= 0 {
+		panic("fastwalk: non-positive maxInFlight: " + itoa(maxInFlight))
+	}
+	return &ConcurrencyControl{sema: make(chan struct{}, maxInFlight)}
+}
+
+func (c *ConcurrencyControl) Enter() { c.sema <- struct{}{} }
+func (c *ConcurrencyControl) Exit()  { <-c.sema }
 
 // Copy returns a copy of c. If c is nil an empty [Config] is returned.
 func (c *Config) Copy() *Config {
@@ -446,10 +466,11 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		resc: make(chan error, numWorkers),
 
 		// TODO: we should just pass the Config
-		maxDepth: conf.MaxDepth,
-		follow:   conf.Follow,
-		toSlash:  conf.ToSlash,
-		sortMode: conf.Sort,
+		maxDepth:           conf.MaxDepth,
+		follow:             conf.Follow,
+		toSlash:            conf.ToSlash,
+		sortMode:           conf.Sort,
+		concurrencyControl: conf.ConcurrencyControl,
 	}
 	if w.follow {
 		w.ignoredDirs = append(w.ignoredDirs, fi)
@@ -532,11 +553,12 @@ type walker struct {
 	enqueuec chan walkItem // from workers
 	resc     chan error    // from workers
 
-	ignoredDirs []fs.FileInfo
-	maxDepth    int
-	follow      bool
-	toSlash     bool
-	sortMode    SortMode
+	ignoredDirs        []fs.FileInfo
+	maxDepth           int
+	follow             bool
+	toSlash            bool
+	sortMode           SortMode
+	concurrencyControl *ConcurrencyControl
 }
 
 type walkItem struct {
@@ -607,6 +629,10 @@ func (w *walker) joinPaths(dir, base string) string {
 }
 
 func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
+	if w.concurrencyControl != nil {
+		defer w.concurrencyControl.Exit()
+		w.concurrencyControl.Enter()
+	}
 	joined := w.joinPaths(dirName, baseName)
 	typ := de.Type()
 	if typ == os.ModeDir {
@@ -652,6 +678,10 @@ func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
 	if w.maxDepth > 0 && depth >= w.maxDepth {
 		return nil
 	}
+	// if w.concurrencyControl != nil {
+	// 	w.concurrencyControl.Enter()
+	// 	defer w.concurrencyControl.Exit()
+	// }
 	err := w.readDir(root, depth+1)
 	if err != nil {
 		// Second call, to report ReadDir error.
@@ -684,7 +714,7 @@ func cleanRootPath(root string) string {
 
 // Avoid the dependency on strconv since it pulls in a large number of other
 // dependencies which bloats the size of this package.
-func itoa(val uint64) string {
+func uitoa(val uint64) string {
 	buf := make([]byte, 20)
 	i := len(buf) - 1
 	for val >= 10 {
@@ -694,4 +724,11 @@ func itoa(val uint64) string {
 	}
 	buf[i] = byte(val + '0')
 	return string(buf[i:])
+}
+
+func itoa(val int) string {
+	if val < 0 {
+		return "-" + uitoa(uint64(-val))
+	}
+	return uitoa(uint64(val))
 }

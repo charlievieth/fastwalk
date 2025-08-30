@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/charlievieth/fastwalk"
 )
@@ -1301,6 +1302,55 @@ func TestConfigCopy(t *testing.T) {
 			t.Fatal("failed to copy config")
 		}
 	})
+}
+
+func TestConfigConcurrencyControl(t *testing.T) {
+	tmpdir := t.TempDir()
+	var roots []string
+	for i := 0; i < 4; i++ {
+		roots = append(roots, filepath.Join(tmpdir, fmt.Sprintf("a%d", i)))
+		for j := 0; j < 4; j++ {
+			for k := 0; k < 4; k++ {
+				for l := 0; l < 4; l++ {
+					name := filepath.Join(tmpdir, fmt.Sprintf("a%d/b%d/c%d/d%d.txt", i, j, k, l))
+					if err := writeFile(name, "data", 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		}
+	}
+
+	conf := fastwalk.Config{
+		NumWorkers:         runtime.NumCPU(),
+		ConcurrencyControl: fastwalk.NewConcurrencyControl(2),
+	}
+
+	inFlight := new(atomic.Int64)
+	maxInFlight := new(atomic.Int64)
+
+	walkFunc := func(path string, d fs.DirEntry, err error) error {
+		defer inFlight.Add(-1)
+		i := inFlight.Add(1)
+		time.Sleep(time.Millisecond)
+		m := maxInFlight.Load()
+		if i > m {
+			maxInFlight.CompareAndSwap(m, i)
+		}
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	for _, root := range roots {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fastwalk.Walk(&conf, root, walkFunc)
+		}()
+	}
+	wg.Wait()
+
+	fmt.Println("maxInFlight:", maxInFlight.Load())
 }
 
 func TestFastWalkJoinPaths(t *testing.T) {
