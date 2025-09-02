@@ -10,7 +10,7 @@ jobs:
     strategy:
       # Test all supported versions on Linux (since it's fast)
       matrix:
-        go: ['1.20', '1.21', '1.22', '1.23', '1.24']
+        go: ['1.21', '1.22', '1.23', '1.24', '1.25']
     steps:
       - uses: actions/checkout@v4
         with:
