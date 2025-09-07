@@ -655,6 +655,60 @@ func TestFastWalk_DirEntryType(t *testing.T) {
 		})
 }
 
+func TestFastWalk_DirEntryStat(t *testing.T) {
+	testFastWalk(t, map[string]string{
+		"foo/foo.go": "one",
+		"bar/bar.go": "LINK:../foo/foo.go",
+		"symdir":     "LINK:foo",
+	},
+		func(path string, d fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			de := d.(fastwalk.DirEntry)
+			if _, ok := de.(fastwalk.DirEntry); !ok {
+				t.Errorf("%q: not a fastwalk.DirEntry: %T", path, de)
+			}
+			ls1, err := os.Lstat(path)
+			if err != nil {
+				t.Error(err)
+			}
+			ls2, err := de.Info()
+			if err != nil {
+				t.Error(err)
+			}
+			if !os.SameFile(ls1, ls2) {
+				t.Errorf("Info(%q) = %v; want: %v", path, ls2, ls1)
+			}
+			st1, err := os.Stat(path)
+			if err != nil {
+				t.Error(err)
+			}
+			st2, err := de.Stat()
+			if err != nil {
+				t.Error(err)
+			}
+			if !os.SameFile(st1, st2) {
+				t.Errorf("Stat(%q) = %v; want: %v", path, st2, st1)
+			}
+			if de.Name() != filepath.Base(path) {
+				t.Errorf("Name() = %q; want: %q", de.Name(), filepath.Base(path))
+			}
+			if de.Type() != de.Type().Type() {
+				t.Errorf("%s: type mismatch got: %q want: %q",
+					path, de.Type(), de.Type().Type())
+			}
+			return nil
+		},
+		map[string]os.FileMode{
+			"":                os.ModeDir,
+			"/src":            os.ModeDir,
+			"/src/bar":        os.ModeDir,
+			"/src/bar/bar.go": os.ModeSymlink,
+			"/src/foo":        os.ModeDir,
+			"/src/foo/foo.go": 0,
+			"/src/symdir":     os.ModeSymlink,
+		})
+}
+
 func TestFastWalk_SkipDir(t *testing.T) {
 	test := func(t *testing.T, mode fastwalk.SortMode) {
 		conf := fastwalk.DefaultConfig.Copy()
@@ -693,6 +747,28 @@ func TestFastWalk_SkipDir(t *testing.T) {
 		t.Run(mode.String(), func(t *testing.T) {
 			test(t, mode)
 		})
+	}
+}
+
+// Test that returning SkipDir for the root directory aborts the walk
+func TestFastWalk_SkipDir_Root(t *testing.T) {
+	want := map[string]os.FileMode{
+		"": os.ModeDir,
+	}
+	conf := fastwalk.DefaultConfig.Copy()
+	conf.Sort = fastwalk.SortLexical // Needed for ordering
+	testFastWalkConf(t, conf, map[string]string{
+		"a.go": "a",
+		"b.go": "b",
+	},
+		func(path string, de fs.DirEntry, err error) error {
+			requireNoError(t, err)
+			return fastwalk.SkipDir
+		},
+		want)
+	if len(want) != 1 {
+		t.Errorf("invalid number of files visited: wanted 1, got %v (%q)",
+			len(want), want)
 	}
 }
 
@@ -751,6 +827,117 @@ func TestFastWalk_SkipFiles(t *testing.T) {
 			test(t, mode)
 		})
 	}
+}
+
+func TestFastWalk_SkipAll(t *testing.T) {
+	mapKeys := func(m map[string]os.FileMode) []string {
+		a := make([]string, 0, len(m))
+		for k := range m {
+			a = append(a, k)
+		}
+		return a
+	}
+
+	t.Run("Root", func(t *testing.T) {
+		want := map[string]os.FileMode{
+			"": os.ModeDir,
+		}
+		conf := fastwalk.DefaultConfig.Copy()
+		conf.Sort = fastwalk.SortLexical // Needed for ordering
+		testFastWalkConf(t, conf, map[string]string{
+			"a.go": "a",
+			"b.go": "b",
+		},
+			func(path string, de fs.DirEntry, err error) error {
+				requireNoError(t, err)
+				return fastwalk.SkipAll
+			},
+			want)
+		if len(want) != 1 {
+			t.Errorf("invalid number of files visited: wanted 1, got %v (%q)",
+				len(want), mapKeys(want))
+		}
+	})
+
+	t.Run("File", func(t *testing.T) {
+		want := map[string]os.FileMode{
+			"":          os.ModeDir,
+			"/src":      os.ModeDir,
+			"/src/a.go": 0,
+		}
+		conf := fastwalk.DefaultConfig.Copy()
+		conf.Sort = fastwalk.SortLexical // Needed for ordering
+		testFastWalkConf(t, conf, map[string]string{
+			"a.go": "a",
+			"b.go": "b",
+		},
+			func(path string, de fs.DirEntry, err error) error {
+				requireNoError(t, err)
+				if de.Name() == "a.go" {
+					return fastwalk.SkipAll
+				}
+				return nil
+			},
+			want)
+		if len(want) != 3 {
+			t.Errorf("invalid number of files visited: wanted 3, got %v (%q)",
+				len(want), mapKeys(want))
+		}
+	})
+
+	t.Run("Directory", func(t *testing.T) {
+		want := map[string]os.FileMode{
+			"":          os.ModeDir,
+			"/src":      os.ModeDir,
+			"/src/dir1": os.ModeDir,
+		}
+		conf := fastwalk.DefaultConfig.Copy()
+		conf.Sort = fastwalk.SortDirsFirst // Needed for ordering
+		testFastWalkConf(t, conf, map[string]string{
+			"dir1/a.go": "a",
+			"dir2/a.go": "a",
+		},
+			func(path string, de fs.DirEntry, err error) error {
+				requireNoError(t, err)
+				if de.Name() == "dir1" {
+					return fastwalk.SkipAll
+				}
+				return nil
+			},
+			want)
+		if len(want) != 3 {
+			t.Errorf("invalid number of files visited: wanted 3, got %v (%q)",
+				len(want), mapKeys(want))
+		}
+	})
+
+	t.Run("Symlink", func(t *testing.T) {
+		want := map[string]os.FileMode{
+			"":            os.ModeDir,
+			"/src":        os.ModeDir,
+			"/src/a.go":   0,
+			"/src/symdir": os.ModeSymlink,
+		}
+		conf := fastwalk.DefaultConfig.Copy()
+		conf.Sort = fastwalk.SortFilesFirst // Needed for ordering
+		testFastWalkConf(t, conf, map[string]string{
+			"a.go":       "a",
+			"foo/foo.go": "one",
+			"symdir":     "LINK:foo",
+		},
+			func(path string, de fs.DirEntry, err error) error {
+				requireNoError(t, err)
+				if de.Type()&fs.ModeSymlink != 0 {
+					return fastwalk.SkipAll
+				}
+				return nil
+			},
+			want)
+		if len(want) != 4 {
+			t.Errorf("invalid number of files visited: wanted 4, got %v (%q)",
+				len(want), mapKeys(want))
+		}
+	})
 }
 
 func TestFastWalk_TraverseSymlink(t *testing.T) {
@@ -1331,15 +1518,6 @@ func TestFastWalkJoinPaths(t *testing.T) {
 	}
 	if root != "/" {
 		t.Fatalf(`failed to convert root "///" to "/" got: %q`, root)
-	}
-}
-
-func TestSkipAll(t *testing.T) {
-	err := fastwalk.Walk(nil, ".", func(path string, info fs.DirEntry, err error) error {
-		return fs.SkipAll
-	})
-	if err != fs.SkipAll {
-		t.Error("Expected fs.SkipAll to be returned got:", err)
 	}
 }
 
