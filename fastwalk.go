@@ -43,6 +43,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 )
 
 // ErrTraverseLink is used as a return value from WalkDirFuncs to indicate that
@@ -89,6 +90,9 @@ func DefaultNumWorkers() int {
 	// TODO: Consider using the value of sysctl("hw.perflevel0.physicalcpu").
 	// TODO: Find someone with a Mac Studio to test higher core counts.
 	if runtime.GOOS == "darwin" {
+		if n := darwinNumPerfCores(); n > 0 {
+			return n
+		}
 		switch {
 		case numCPU <= 8:
 			return 4
@@ -103,6 +107,17 @@ func DefaultNumWorkers() int {
 	}
 	return numCPU
 }
+
+var darwinNumPerfCores = sync.OnceValue(func() int {
+	if runtime.GOOS == "darwin" {
+		n, err := syscall.SysctlUint32("hw.perflevel0.physicalcpu_max")
+		if err != nil {
+			return -1
+		}
+		return int(n)
+	}
+	return -1
+})
 
 // DefaultToSlash returns true if this is a Go program compiled for Windows
 // running in an environment ([MSYS/MSYS2] or [Git for Windows]) that uses
@@ -212,7 +227,7 @@ const (
 	// (e.g. symbolic links). Within each group (directories, regular files,
 	// other files) the entries are sorted by name.
 	//
-	// This mode is might be useful at preventing other walk goroutines from
+	// This mode might be useful at preventing other walk goroutines from
 	// stalling due to lack of work since it immediately enqueues all of a
 	// directory's sub-directories for processing. The impact on performance
 	// will be dependent on the workload and the structure of the file tree

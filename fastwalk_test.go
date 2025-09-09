@@ -1479,6 +1479,142 @@ func BenchmarkFastWalkAdapters(b *testing.B) {
 	})
 }
 
+var calibrateNumWorkers = flag.Bool("calibrate", false,
+	"Calibrate the ideal number of fastwalk worker goroutines for a given operation")
+
+func TestCalibrateNumWorkers(t *testing.T) {
+	if !*calibrateNumWorkers {
+		t.Skip(`Skipping: test requires the "-calibrate" flag`)
+	}
+	if testing.Short() {
+		t.Skip("Skipping: short test")
+	}
+
+	bench := func(t *testing.T, numWorkers int, walkFn fs.WalkDirFunc) testing.BenchmarkResult {
+		if numWorkers <= 0 {
+			panic("non-positive numWorkers")
+		}
+		// numWorkers++ // WARN
+		conf := fastwalk.DefaultConfig.Copy()
+		conf.NumWorkers = numWorkers
+		res := testing.Benchmark(func(b *testing.B) {
+			for b.Loop() {
+				err := fastwalk.Walk(conf, *benchDir, walkFn)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		t.Logf("%d\t%s\t%s\n", numWorkers, res.String(), res.MemString())
+		return res
+	}
+
+	runBench := func(t *testing.T, walkFn fs.WalkDirFunc) {
+		t.Log(t.Name())
+		baseline := bench(t, 1, walkFn)
+		n := sort.Search(runtime.NumCPU()+1, func(numWorkers int) bool {
+			res := bench(t, numWorkers, walkFn)
+			faster := res.NsPerOp()*100 > baseline.NsPerOp()*105
+			if res.NsPerOp() < baseline.NsPerOp() {
+				baseline = res
+			}
+			return faster
+		})
+		t.Log("Optimal:", n-1)
+	}
+
+	// Bench pure traversal speed
+	t.Run("NoOp", func(t *testing.T) {
+		runBench(t, func(path string, d fs.DirEntry, err error) error {
+			return err
+		})
+	})
+
+	// No IO and light CPU
+	t.Run("NoIO", func(t *testing.T) {
+		runBench(t, func(path string, d fs.DirEntry, err error) error {
+			if err == nil {
+				fmt.Fprintf(io.Discard, "%s: %q\n", d.Type(), path)
+			}
+			return err
+		})
+	})
+
+	// Stat each regular file
+	t.Run("Stat", func(t *testing.T) {
+		runBench(t, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				_, _ = d.Info()
+			}
+			return err
+		})
+	})
+
+	// IO heavy task
+	t.Run("ReadFile", func(t *testing.T) {
+		runBench(t, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || !d.Type().IsRegular() {
+				return err
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				if os.IsNotExist(err) || os.IsPermission(err) {
+					return nil
+				}
+				return err
+			}
+			defer f.Close()
+
+			_, err = io.Copy(io.Discard, f)
+			return err
+		})
+	})
+
+	// CPU and IO heavy task
+	t.Run("Hash", func(t *testing.T) {
+		bufPool := &sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, 96*1024)
+				return &b
+			},
+		}
+		runBench(t, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || !d.Type().IsRegular() {
+				return err
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				if os.IsNotExist(err) || os.IsPermission(err) {
+					return nil
+				}
+				return err
+			}
+			defer f.Close()
+
+			p := bufPool.Get().(*[]byte)
+			h := md5.New()
+			_, err = io.CopyBuffer(h, f, *p)
+			bufPool.Put(p)
+			_ = h.Sum(nil)
+			return err
+		})
+	})
+
+	// runBench(t, func(path string, d fs.DirEntry, err error) error {
+	// 	return err
+	// })
+
+	// for numWorkers := 1; numWorkers <= runtime.NumCPU(); numWorkers++ {
+	// 	conf := fastwalk.DefaultConfig.Copy()
+	// 	conf.NumWorkers = numWorkers
+
+	// }
+	// res := testing.Benchmark(func(b *testing.B) {
+
+	// })
+	// _ = res
+}
+
 // Benchmark various tasks with different worker counts.
 //
 // Observations:

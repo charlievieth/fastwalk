@@ -5,7 +5,9 @@ package fastwalk
 import (
 	"io/fs"
 	"os"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/charlievieth/fastwalk/internal/fmtdirent"
@@ -91,33 +93,57 @@ func sortDirents(mode SortMode, dents []*unixDirent) {
 	}
 	switch mode {
 	case SortLexical:
-		sort.Slice(dents, func(i, j int) bool {
-			return dents[i].name < dents[j].name
+		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
+			return strings.Compare(d1.name, d2.name)
 		})
+		// sort.Slice(dents, func(i, j int) bool {
+		// 	return dents[i].name < dents[j].name
+		// })
 	case SortFilesFirst:
-		sort.Slice(dents, func(i, j int) bool {
-			d1 := dents[i]
-			d2 := dents[j]
+		slices.SortFunc(dents, func(d1, d2 *unixDirent) int {
 			r1 := d1.typ.IsRegular()
 			r2 := d2.typ.IsRegular()
 			switch {
 			case r1 && !r2:
-				return true
+				return -1
 			case !r1 && r2:
-				return false
+				return 1
 			case !r1 && !r2:
 				// Both are not regular files: sort directories last
 				dd1 := d1.typ.IsDir()
 				dd2 := d2.typ.IsDir()
 				switch {
 				case !dd1 && dd2:
-					return true
+					return -1
 				case dd1 && !dd2:
-					return false
+					return 1
 				}
 			}
-			return d1.name < d2.name
+			return strings.Compare(d1.name, d2.name)
 		})
+		// sort.Slice(dents, func(i, j int) bool {
+		// 	d1 := dents[i]
+		// 	d2 := dents[j]
+		// 	r1 := d1.typ.IsRegular()
+		// 	r2 := d2.typ.IsRegular()
+		// 	switch {
+		// 	case r1 && !r2:
+		// 		return true
+		// 	case !r1 && r2:
+		// 		return false
+		// 	case !r1 && !r2:
+		// 		// Both are not regular files: sort directories last
+		// 		dd1 := d1.typ.IsDir()
+		// 		dd2 := d2.typ.IsDir()
+		// 		switch {
+		// 		case !dd1 && dd2:
+		// 			return true
+		// 		case dd1 && !dd2:
+		// 			return false
+		// 		}
+		// 	}
+		// 	return d1.name < d2.name
+		// })
 	case SortDirsFirst:
 		sort.Slice(dents, func(i, j int) bool {
 			d1 := dents[i]
