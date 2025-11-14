@@ -6,7 +6,7 @@ on:
     branches: [master]
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: macos-latest
     strategy:
       matrix:
         go: ['1.22', '1.23', '1.24']
