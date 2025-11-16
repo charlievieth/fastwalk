@@ -10,11 +10,13 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1341,6 +1343,83 @@ func TestSkipAll(t *testing.T) {
 	if err != fs.SkipAll {
 		t.Error("Expected fs.SkipAll to be returned got:", err)
 	}
+}
+
+func TestDefaultNumWorkers(t *testing.T) {
+	if os.Getenv("FASTWALK_TEST_COOKIE") == "123456" {
+		fmt.Printf("## DEFAULT_NUM_WORKERS: %d\n", fastwalk.DefaultNumWorkers())
+		return
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	re := regexp.MustCompile(`## DEFAULT_NUM_WORKERS:\s+(\d+)`)
+	parseOut := func(t *testing.T, out []byte) int {
+		a := re.FindSubmatch(out)
+		if len(a) != 2 {
+			t.Fatal(`Sub-test output does not contain: "## DEFAULT_NUM_WORKERS"`)
+		}
+		n, err := strconv.Atoi(string(a[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	runTest := func(t *testing.T, maxProcs, want int) {
+		cmd := exec.Command(exe, "-test.run", "^TestDefaultNumWorkers$")
+		cmd.Env = cmd.Environ()
+		cmd.Env = slices.DeleteFunc(cmd.Env, func(s string) bool {
+			return strings.HasPrefix(s, "GOMAXPROCS=") || strings.HasPrefix(s, "GOFLAGS=")
+		})
+		cmd.Env = append(cmd.Env, "FASTWALK_TEST_COOKIE=123456")
+		if maxProcs > 0 {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("GOMAXPROCS=%d", maxProcs))
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("test failed: %s", bytes.TrimSpace(out))
+		}
+		got := parseOut(t, out)
+		if got != want {
+			t.Fatalf("got: %d want: %d", got, want)
+		}
+	}
+
+	t.Run("GOMAXPROCS", func(t *testing.T) {
+		for _, procs := range []int{2, 4, 8, 20, 64} {
+			t.Run(strconv.Itoa(procs), func(t *testing.T) {
+				want := max(4, min(procs, 32))
+				runTest(t, procs, want)
+			})
+		}
+	})
+
+	t.Run("Darwin_ARM64", func(t *testing.T) {
+		if runtime.GOOS != "darwin" && runtime.GOARCH != "arm64" {
+			t.Skip("test only supported on darwin/arm64")
+		}
+		// Not all platforms have syscall.SysctlUint32 so shell out to
+		// "sysctl". This is ugly but saves us from having to duplicate
+		// a large portion of this code.
+		out, err := exec.Command("sysctl", "hw.perflevel0.physicalcpu").CombinedOutput()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, val, ok := strings.Cut(strings.TrimSpace(string(out)), " ")
+		if !ok {
+			t.Fatalf("Invalid sysctl output: %q", out)
+		}
+		want, err := strconv.Atoi(val)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = max(want, 4) // 4 is the minimum
+		runTest(t, -1, int(want))
+	})
 }
 
 func BenchmarkSortModeString(b *testing.B) {

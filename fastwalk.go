@@ -77,18 +77,23 @@ func DefaultNumWorkers() int {
 	if numCPU < 4 {
 		return 4
 	}
+	// User manually set GOMAXPROCS - respect it.
+	if numCPU != runtime.NumCPU() {
+		return min(numCPU, 32)
+	}
 	// Darwin IO performance on APFS can slow with increased parallelism.
-	// Depending on CPU, stat(2) performance is best around 4-10 workers
-	// and file IO is best around 4 workers. More workers only benefit CPU
-	// intensive tasks.
+	// For Intel CPUs (and maybe older arm64 CPUs) performance is best
+	// around 4-10 workers and file IO is best around 4 workers. More workers
+	// only benefit CPU intensive tasks.
 	//
-	// NB(Charlie): As of macOS 15, the parallel performance of readdir_r(3)
-	// and stat(2) calls has improved and is now generally the number of
-	// performance cores (on ARM Macs).
-	//
-	// TODO: Consider using the value of sysctl("hw.perflevel0.physicalcpu").
-	// TODO: Find someone with a Mac Studio to test higher core counts.
+	// As of macOS 15 (on ARM Macs), the parallel performance of readdir_r(3)
+	// and stat(2) calls has improved and the ideal number of workers is now
+	// generally the number of performance cores.
 	if runtime.GOOS == "darwin" {
+		if n := darwinNumPerfCores(); n > 0 {
+			return n
+		}
+		// This is primarily for Intel CPUs.
 		switch {
 		case numCPU <= 8:
 			return 4
@@ -98,10 +103,7 @@ func DefaultNumWorkers() int {
 			return 10
 		}
 	}
-	if numCPU > 32 {
-		return 32
-	}
-	return numCPU
+	return min(numCPU, 32)
 }
 
 // DefaultToSlash returns true if this is a Go program compiled for Windows
