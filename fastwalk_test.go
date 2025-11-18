@@ -1399,7 +1399,7 @@ func TestDefaultNumWorkers(t *testing.T) {
 	})
 
 	t.Run("Darwin_ARM64", func(t *testing.T) {
-		if runtime.GOOS != "darwin" && runtime.GOARCH != "arm64" {
+		if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 			t.Skip("test only supported on darwin/arm64")
 		}
 		// Not all platforms have syscall.SysctlUint32 so shell out to
