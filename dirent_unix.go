@@ -16,8 +16,6 @@ type unixDirent struct {
 	name   string
 	typ    fs.FileMode
 	depth  uint32 // uint32 so that we can pack it next to typ
-	info   *fileInfo
-	stat   *fileInfo
 }
 
 func (d *unixDirent) Name() string      { return d.name }
@@ -27,22 +25,11 @@ func (d *unixDirent) Depth() int        { return int(d.depth) }
 func (d *unixDirent) String() string    { return fmtdirent.FormatDirEntry(d) }
 
 func (d *unixDirent) Info() (fs.FileInfo, error) {
-	info := loadFileInfo(&d.info)
-	info.once.Do(func() {
-		info.FileInfo, info.err = os.Lstat(d.parent + "/" + d.name)
-	})
-	return info.FileInfo, info.err
+	return os.Lstat(d.parent + "/" + d.name)
 }
 
 func (d *unixDirent) Stat() (fs.FileInfo, error) {
-	if d.typ&os.ModeSymlink == 0 {
-		return d.Info()
-	}
-	stat := loadFileInfo(&d.stat)
-	stat.once.Do(func() {
-		stat.FileInfo, stat.err = os.Stat(d.parent + "/" + d.name)
-	})
-	return stat.FileInfo, stat.err
+	return os.Stat(d.parent + "/" + d.name)
 }
 
 func newUnixDirent(parent, name string, typ fs.FileMode, depth int) *unixDirent {
@@ -55,16 +42,7 @@ func newUnixDirent(parent, name string, typ fs.FileMode, depth int) *unixDirent 
 }
 
 func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
-	info := &fileInfo{
-		FileInfo: fi,
-	}
-	info.once.Do(func() {})
-	return &unixDirent{
-		parent: dirname,
-		name:   fi.Name(),
-		typ:    fi.Mode().Type(),
-		info:   info,
-	}
+	return newUnixDirent(dirname, fi.Name(), fi.Mode().Type(), 0)
 }
 
 var direntSlicePool = sync.Pool{

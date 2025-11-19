@@ -325,7 +325,7 @@ func (c *Config) Copy() *Config {
 
 // A DirEntry extends the [fs.DirEntry] interface to add a Stat() method
 // that returns the result of calling [os.Stat] on the underlying file.
-// The results of Info() and Stat() are cached.
+// The result of Info() may be cached. The result of Stat() is never cached.
 //
 // The [fs.DirEntry] argument passed to the [fs.WalkDirFunc] by [Walk] is
 // always a DirEntry.
@@ -333,10 +333,8 @@ type DirEntry interface {
 	fs.DirEntry
 
 	// Stat returns the fs.FileInfo for the file or subdirectory described
-	// by the entry. The returned FileInfo may be from the time of the
-	// original directory read or from the time of the call to os.Stat.
-	// If the entry denotes a symbolic link, Stat reports the information
-	// about the target itself, not the link.
+	// by the entry. If the entry denotes a symbolic link, Stat reports the
+	// information about the target itself, not the link.
 	Stat() (fs.FileInfo, error)
 
 	// Depth returns the depth at which this entry was generated relative to the

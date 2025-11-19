@@ -3,50 +3,25 @@ package fastwalk
 import (
 	"io/fs"
 	"os"
-	"sync"
-	"sync/atomic"
 	"syscall"
-	"unsafe"
 )
 
-type fileInfo struct {
-	once sync.Once
-	fs.FileInfo
-	err error
-}
-
-func loadFileInfo(pinfo **fileInfo) *fileInfo {
-	ptr := (*unsafe.Pointer)(unsafe.Pointer(pinfo))
-	fi := (*fileInfo)(atomic.LoadPointer(ptr))
-	if fi == nil {
-		fi = &fileInfo{}
-		if !atomic.CompareAndSwapPointer(
-			(*unsafe.Pointer)(unsafe.Pointer(pinfo)), // adrr
-			nil,                                      // old
-			unsafe.Pointer(fi),                       // new
-		) {
-			fi = (*fileInfo)(atomic.LoadPointer(ptr))
-		}
-	}
-	return fi
-}
-
-// StatDirEntry returns a [fs.FileInfo] describing the named file ([os.Stat]).
-// If de is a [fastwalk.DirEntry] its Stat method is used and the returned
-// FileInfo may be cached from a prior call to Stat. If a cached result is not
-// desired, users should just call [os.Stat] directly.
+// StatDirEntry returns a [fs.FileInfo] describing the named file. If de is a
+// [fastwalk.DirEntry] its Stat method is used. Otherwise, [os.Stat] is called
+// on the path. Therefore, de should be the DirEntry describing path.
 //
-// This is a helper function for calling Stat on the DirEntry passed to the
-// walkFn argument to [Walk].
+// Note: This function was added when fastwalk used to always cache the result
+// of DirEntry.Stat. Now that fastwalk no longer explicitly caches the result
+// of Stat this function is slightly less useful and is equivalent to the below
+// code:
 //
-// The path argument is only used if de is not of type [fastwalk.DirEntry].
-// Therefore, de should be the DirEntry describing path.
+//	if d, ok := de.(DirEntry); ok {
+//		return d.Stat()
+//	}
+//	return os.Stat(path)
 func StatDirEntry(path string, de fs.DirEntry) (fs.FileInfo, error) {
 	if de == nil {
 		return nil, &os.PathError{Op: "stat", Path: path, Err: syscall.EINVAL}
-	}
-	if de.Type()&os.ModeSymlink == 0 {
-		return de.Info()
 	}
 	if d, ok := de.(DirEntry); ok {
 		return d.Stat()
