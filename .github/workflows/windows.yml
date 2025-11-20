@@ -11,7 +11,7 @@ jobs:
       matrix:
         go: ['1.22', '1.23', '1.24']
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
       - name: Set up Go
@@ -38,7 +38,7 @@ jobs:
 #       matrix:
 #         go: [1.22]
 #     steps:
-#     - uses: actions/checkout@v5
+#     - uses: actions/checkout@v6
 #       with:
 #         fetch-depth: 1
 #     - uses: Vampire/setup-wsl@v3
