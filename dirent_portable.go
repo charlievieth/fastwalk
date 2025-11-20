@@ -8,6 +8,7 @@ package fastwalk
 import (
 	"io/fs"
 	"os"
+	"runtime"
 	"sort"
 	"sync"
 
@@ -19,7 +20,6 @@ var _ DirEntry = (*portableDirent)(nil)
 type portableDirent struct {
 	fs.DirEntry
 	parent string
-	stat   *fileInfo
 	depth  uint32
 }
 
@@ -32,14 +32,14 @@ func (d *portableDirent) Depth() int {
 }
 
 func (d *portableDirent) Stat() (fs.FileInfo, error) {
-	if d.DirEntry.Type()&os.ModeSymlink == 0 {
-		return d.DirEntry.Info()
+	if runtime.GOOS == "windows" {
+		// On Windows use Info() if the file is not a symlink since
+		// IIRC the result is cached when the FileInfo is created.
+		if d.DirEntry.Type()&fs.ModeSymlink == 0 {
+			return d.DirEntry.Info()
+		}
 	}
-	stat := loadFileInfo(&d.stat)
-	stat.once.Do(func() {
-		stat.FileInfo, stat.err = os.Stat(d.parent + string(os.PathSeparator) + d.Name())
-	})
-	return stat.FileInfo, stat.err
+	return os.Stat(d.parent + string(os.PathSeparator) + d.Name())
 }
 
 func newDirEntry(dirName string, info fs.DirEntry, depth int) DirEntry {
