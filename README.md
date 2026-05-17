@@ -1,3 +1,35 @@
+
+<div align="right">
+  <details>
+    <summary >🌐 Language</summary>
+    <div>
+      <div align="center">
+        <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=en">English</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=zh-CN">简体中文</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=zh-TW">繁體中文</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=ja">日本語</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=ko">한국어</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=hi">हिन्दी</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=th">ไทย</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=fr">Français</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=de">Deutsch</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=es">Español</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=it">Italiano</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=ru">Русский</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=pt">Português</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=nl">Nederlands</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=pl">Polski</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=ar">العربية</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=fa">فارسی</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=tr">Türkçe</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=vi">Tiếng Việt</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=id">Bahasa Indonesia</a>
+        | <a href="https://openaitx.github.io/view.html?user=charlievieth&project=fastwalk&lang=as">অসমীয়া</
+      </div>
+    </div>
+  </details>
+</div>
+
 [![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](https://pkg.go.dev/github.com/charlievieth/fastwalk)
 [![Test fastwalk on macOS](https://github.com/charlievieth/fastwalk/actions/workflows/macos.yml/badge.svg)](https://github.com/charlievieth/fastwalk/actions/workflows/macos.yml)
 [![Test fastwalk on Linux](https://github.com/charlievieth/fastwalk/actions/workflows/linux.yml/badge.svg)](https://github.com/charlievieth/fastwalk/actions/workflows/linux.yml)
