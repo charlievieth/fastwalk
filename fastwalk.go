@@ -81,6 +81,9 @@ func DefaultNumWorkers() int {
 	if numCPU != runtime.NumCPU() {
 		return min(numCPU, 32)
 	}
+	// What follows is a brief history of how we calculat(ed) the number
+	// of workers on Darwin/macOS:
+	//
 	// Darwin IO performance on APFS can slow with increased parallelism.
 	// For Intel CPUs (and maybe older arm64 CPUs) performance is best
 	// around 4-10 workers and file IO is best around 4 workers. More workers
@@ -89,11 +92,21 @@ func DefaultNumWorkers() int {
 	// As of macOS 15 (on ARM Macs), the parallel performance of readdir_r(3)
 	// and stat(2) calls has improved and the ideal number of workers is now
 	// generally the number of performance cores.
+	//
+	// Addendum #1: We used to use sysctl to fetch the number of performance
+	// cores ("hw.perflevel0.physicalcpu") and use that as the ideal number of
+	// workers. But with the introduction of M5 Pro chips there are now "Super"
+	// cores ("hw.perflevel0") so we were limiting our concurrency to a smaller
+	// number of "Super" cores and not utilizing any of the "Performance" cores
+	// ("hw.perflevel1").
+	//
+	// To fix this and make my my life simpler, we're going back to a simple
+	// strategy of using max(GOMAXPROCS-2, 4).
 	if runtime.GOOS == "darwin" {
-		if n := darwinNumPerfCores(); n > 0 {
-			return n
+		if runtime.GOARCH == "arm64" {
+			return max(numCPU-2, 4)
 		}
-		// This is primarily for Intel CPUs.
+		// Intel CPU.
 		switch {
 		case numCPU <= 8:
 			return 4
