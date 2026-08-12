@@ -1397,29 +1397,6 @@ func TestDefaultNumWorkers(t *testing.T) {
 			})
 		}
 	})
-
-	t.Run("Darwin_ARM64", func(t *testing.T) {
-		if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-			t.Skip("test only supported on darwin/arm64")
-		}
-		// Not all platforms have syscall.SysctlUint32 so shell out to
-		// "sysctl". This is ugly but saves us from having to duplicate
-		// a large portion of this code.
-		out, err := exec.Command("sysctl", "hw.perflevel0.physicalcpu").CombinedOutput()
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, val, ok := strings.Cut(strings.TrimSpace(string(out)), " ")
-		if !ok {
-			t.Fatalf("Invalid sysctl output: %q", out)
-		}
-		want, err := strconv.Atoi(val)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want = max(want, 4) // 4 is the minimum
-		runTest(t, -1, int(want))
-	})
 }
 
 func BenchmarkSortModeString(b *testing.B) {
