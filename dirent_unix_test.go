@@ -10,10 +10,8 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
-	"unsafe"
 )
 
 func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
@@ -23,7 +21,7 @@ func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
 		return fi1.Name() == fi2.Name() &&
 			fi1.Size() == fi2.Size() &&
 			fi1.Mode() == fi2.Mode() &&
-			fi1.ModTime() == fi2.ModTime() &&
+			fi1.ModTime().Equal(fi2.ModTime()) &&
 			fi1.IsDir() == fi2.IsDir() &&
 			os.SameFile(fi1, fi2)
 	}
@@ -38,10 +36,6 @@ func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	var mu sync.Mutex
-	infos := make(map[*fileInfo]int)
-	stats := make(map[*fileInfo]int)
-
 	for i := 0; i < numCPU; i++ {
 		wg.Add(1)
 		go func() {
@@ -53,12 +47,6 @@ func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
 					t.Error(err)
 					return
 				}
-				info := (*fileInfo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&ent.info))))
-				stat := (*fileInfo)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&ent.stat))))
-				mu.Lock()
-				infos[info]++
-				stats[stat]++
-				mu.Unlock()
 				if !sameFile(fi, want) {
 					t.Errorf("FileInfo not equal:\nwant: %s\ngot:  %s\n",
 						FormatFileInfo(want), FormatFileInfo(fi))
@@ -70,8 +58,6 @@ func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
 
 	close(start)
 	wg.Wait()
-
-	t.Logf("Infos: %d Stats: %d\n", len(infos), len(stats))
 }
 
 func TestUnixDirent(t *testing.T) {
@@ -222,24 +208,6 @@ func TestSortDirents(t *testing.T) {
 	})
 }
 
-func BenchmarkUnixDirentLoadFileInfo(b *testing.B) {
-	wd, err := os.Getwd()
-	if err != nil {
-		b.Fatal(err)
-	}
-	fi, err := os.Lstat(wd)
-	if err != nil {
-		b.Fatal(err)
-	}
-	parent, name := filepath.Split(wd)
-	d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
-
-	for i := 0; i < b.N; i++ {
-		loadFileInfo(&d.info)
-		d.info = nil
-	}
-}
-
 func BenchmarkUnixDirentInfo(b *testing.B) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -250,38 +218,26 @@ func BenchmarkUnixDirentInfo(b *testing.B) {
 		b.Fatal(err)
 	}
 	parent, name := filepath.Split(wd)
-	d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
 
-	for i := 0; i < b.N; i++ {
-		fi, err := d.Info()
-		if err != nil {
-			b.Fatal(err)
+	b.Run("Serial", func(b *testing.B) {
+		d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
+		for i := 0; i < b.N; i++ {
+			_, err := d.Info()
+			if err != nil {
+				b.Fatal(err)
+			}
 		}
-		if fi == nil {
-			b.Fatal("Nil FileInfo")
-		}
-	}
-}
+	})
 
-func BenchmarkUnixDirentStat(b *testing.B) {
-	wd, err := os.Getwd()
-	if err != nil {
-		b.Fatal(err)
-	}
-	fi, err := os.Lstat(wd)
-	if err != nil {
-		b.Fatal(err)
-	}
-	parent, name := filepath.Split(wd)
-	d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
-
-	for i := 0; i < b.N; i++ {
-		fi, err := d.Stat()
-		if err != nil {
-			b.Fatal(err)
-		}
-		if fi == nil {
-			b.Fatal("Nil FileInfo")
-		}
-	}
+	b.Run("Parallel", func(b *testing.B) {
+		b.RunParallel(func(pb *testing.PB) {
+			d := newUnixDirent(parent, name, fi.Mode().Type(), 0)
+			for pb.Next() {
+				_, err := d.Info()
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	})
 }

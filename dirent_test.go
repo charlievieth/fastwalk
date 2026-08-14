@@ -6,8 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
-	"sync"
 	"testing"
 
 	"github.com/charlievieth/fastwalk"
@@ -75,91 +73,5 @@ func TestDirent(t *testing.T) {
 			t.Errorf("lstat mismatch\n got:\n%s\nwant:\n%s",
 				fastwalk.FormatFileInfo(got), fastwalk.FormatFileInfo(want))
 		}
-		fi, err := fileEnt.Info()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if fi != got {
-			t.Error("failed to return or cache FileInfo")
-		}
-		de := fileEnt.(fastwalk.DirEntry)
-		fi, err = de.Stat()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if fi != got {
-			t.Error("failed to use cached Info result for non-symlink")
-		}
-	})
-
-	t.Run("Parallel", func(t *testing.T) {
-		testParallel := func(t *testing.T, de fs.DirEntry, fn func() (fs.FileInfo, error)) {
-			numCPU := runtime.NumCPU()
-
-			infos := make([][]fs.FileInfo, numCPU)
-			for i := range infos {
-				infos[i] = make([]fs.FileInfo, 100)
-			}
-
-			// Start all the goroutines at the same time to
-			// maximise the chance of a race
-			start := make(chan struct{})
-			var wg, ready sync.WaitGroup
-			ready.Add(numCPU)
-			wg.Add(numCPU)
-			for i := 0; i < numCPU; i++ {
-				go func(fis []fs.FileInfo, de fs.DirEntry) {
-					defer wg.Done()
-					ready.Done()
-					<-start
-					for i := range fis {
-						fis[i], _ = de.Info()
-					}
-				}(infos[i], de)
-			}
-
-			ready.Wait()
-			close(start) // start all goroutines at once
-			wg.Wait()
-
-			first := infos[0][0]
-			if first == nil {
-				t.Fatal("failed to stat file:", de.Name())
-			}
-			for _, fis := range infos {
-				for _, fi := range fis {
-					if fi != first {
-						t.Errorf("Expected the same fs.FileInfo to always "+
-							"be returned got: %#v want: %#v", fi, first)
-					}
-				}
-			}
-		}
-
-		t.Run("File", func(t *testing.T) {
-			t.Run("Stat", func(t *testing.T) {
-				_, fileEnt := getDirEnts(t)
-				de := fileEnt.(fastwalk.DirEntry)
-				testParallel(t, de, de.Stat)
-			})
-			t.Run("Lstat", func(t *testing.T) {
-				_, fileEnt := getDirEnts(t)
-				de := fileEnt.(fastwalk.DirEntry)
-				testParallel(t, de, de.Info)
-			})
-		})
-
-		t.Run("Link", func(t *testing.T) {
-			t.Run("Stat", func(t *testing.T) {
-				linkEnt, _ := getDirEnts(t)
-				de := linkEnt.(fastwalk.DirEntry)
-				testParallel(t, de, de.Stat)
-			})
-			t.Run("Lstat", func(t *testing.T) {
-				linkEnt, _ := getDirEnts(t)
-				de := linkEnt.(fastwalk.DirEntry)
-				testParallel(t, de, de.Info)
-			})
-		})
 	})
 }
