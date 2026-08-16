@@ -20,18 +20,18 @@ const blockSize = 8192
 // value used to represent a syscall.DT_UNKNOWN Dirent.Type.
 const unknownFileMode os.FileMode = ^os.FileMode(0)
 
-func (w *walker) readDir(dirName string, depth int) error {
+func (wk *worker) readDir(dirName string, depth int) error {
+	w := wk.w
 	fd, err := open(dirName, 0, 0)
 	if err != nil {
 		return &os.PathError{Op: "open", Path: dirName, Err: err}
 	}
 	defer syscall.Close(fd)
 
-	var p *[]*unixDirent
-	if w.sortMode != SortNone {
-		p = direntSlicePool.Get().(*[]*unixDirent)
+	sorted := w.sortMode != SortNone
+	if sorted {
+		defer func() { clear(wk.buf.dents); wk.buf.dents = wk.buf.dents[:0] }()
 	}
-	defer putDirentSlice(p)
 
 	// The buffer must be at least a block long.
 	buf := make([]byte, blockSize) // stack-allocated; doesn't escape
@@ -49,17 +49,21 @@ func (w *walker) readDir(dirName string, depth int) error {
 				break // exit loop
 			}
 		}
-		consumed, name, typ := dirent.Parse(buf[bufp:nbuf])
+		consumed, name, typ := dirent.ParseBytes(buf[bufp:nbuf])
 		bufp += consumed
 
-		if name == "" || name == "." || name == ".." {
+		if len(name) == 0 || string(name) == "." || string(name) == ".." {
 			continue
 		}
+		if skipFiles && typ.IsRegular() {
+			continue
+		}
+		path, nm := wk.joinPathBytes(dirName, name)
 		// Fallback for filesystems (like old XFS) that don't
 		// support Dirent.Type and have DT_UNKNOWN (0) there
 		// instead.
 		if typ == unknownFileMode {
-			fi, err := os.Lstat(dirName + "/" + name)
+			fi, err := os.Lstat(path)
 			if err != nil {
 				// It got deleted in the meantime.
 				if os.IsNotExist(err) {
@@ -68,13 +72,13 @@ func (w *walker) readDir(dirName string, depth int) error {
 				return err
 			}
 			typ = fi.Mode() & os.ModeType
+			if skipFiles && typ.IsRegular() {
+				continue
+			}
 		}
-		if skipFiles && typ.IsRegular() {
-			continue
-		}
-		de := newUnixDirent(dirName, name, typ, depth)
-		if w.sortMode == SortNone {
-			if err := w.onDirEnt(dirName, name, de); err != nil {
+		de := wk.newDirent(path, nm, typ, depth)
+		if !sorted {
+			if err := wk.onDirEnt(path, de); err != nil {
 				if err == ErrSkipFiles {
 					skipFiles = true
 					continue
@@ -82,21 +86,19 @@ func (w *walker) readDir(dirName string, depth int) error {
 				return err
 			}
 		} else {
-			*p = append(*p, de)
+			wk.buf.dents = append(wk.buf.dents, de)
 		}
 	}
-	if w.sortMode == SortNone {
+	if !sorted {
 		return nil
 	}
 
-	dents := *p
-	sortDirents(w.sortMode, dents)
-	for _, d := range dents {
-		d := d
+	sortDirents(w.sortMode, wk.buf.dents)
+	for _, d := range wk.buf.dents {
 		if skipFiles && d.typ.IsRegular() {
 			continue
 		}
-		if err := w.onDirEnt(dirName, d.Name(), d); err != nil {
+		if err := wk.onDirEnt(d.path, d); err != nil {
 			if err != ErrSkipFiles {
 				return err
 			}

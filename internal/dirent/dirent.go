@@ -37,42 +37,7 @@ func readInt(b []byte, off, size uintptr) (uint64, bool) {
 }
 
 func Parse(buf []byte) (consumed int, name string, typ os.FileMode) {
-
-	reclen, ok := direntReclen(buf)
-	if !ok || reclen > uint64(len(buf)) {
-		// WARN: this is a hard error because we consumed 0 bytes
-		// and not stopping here could lead to an infinite loop.
-		return 0, "", InvalidMode
-	}
-	consumed = int(reclen)
-	rec := buf[:reclen]
-
-	ino, ok := direntIno(rec)
-	if !ok {
-		return consumed, "", InvalidMode
-	}
-	// When building to wasip1, the host runtime might be running on Windows
-	// or might expose a remote file system which does not have the concept
-	// of inodes. Therefore, we cannot make the assumption that it is safe
-	// to skip entries with zero inodes.
-	if ino == 0 && runtime.GOOS != "wasip1" {
-		return consumed, "", InvalidMode
-	}
-
-	typ = direntType(buf)
-
-	const namoff = uint64(unsafe.Offsetof(syscall.Dirent{}.Name))
-	namlen, ok := direntNamlen(rec)
-	if !ok || namoff+namlen > uint64(len(rec)) {
-		return consumed, "", InvalidMode
-	}
-	namebuf := rec[namoff : namoff+namlen]
-	for i, c := range namebuf {
-		if c == 0 {
-			namebuf = namebuf[:i]
-			break
-		}
-	}
+	consumed, namebuf, typ := ParseBytes(buf)
 	// Check for useless names before allocating a string.
 	if string(namebuf) == "." {
 		name = "."
@@ -82,4 +47,47 @@ func Parse(buf []byte) (consumed int, name string, typ os.FileMode) {
 		name = string(namebuf)
 	}
 	return consumed, name, typ
+}
+
+// ParseBytes is Parse but returns the entry's name as a sub-slice of buf,
+// which lets callers that immediately copy the name avoid allocating a string
+// for entries they end up discarding.
+func ParseBytes(buf []byte) (consumed int, name []byte, typ os.FileMode) {
+
+	reclen, ok := direntReclen(buf)
+	if !ok || reclen > uint64(len(buf)) {
+		// WARN: this is a hard error because we consumed 0 bytes
+		// and not stopping here could lead to an infinite loop.
+		return 0, nil, InvalidMode
+	}
+	consumed = int(reclen)
+	rec := buf[:reclen]
+
+	ino, ok := direntIno(rec)
+	if !ok {
+		return consumed, nil, InvalidMode
+	}
+	// When building to wasip1, the host runtime might be running on Windows
+	// or might expose a remote file system which does not have the concept
+	// of inodes. Therefore, we cannot make the assumption that it is safe
+	// to skip entries with zero inodes.
+	if ino == 0 && runtime.GOOS != "wasip1" {
+		return consumed, nil, InvalidMode
+	}
+
+	typ = direntType(buf)
+
+	const namoff = uint64(unsafe.Offsetof(syscall.Dirent{}.Name))
+	namlen, ok := direntNamlen(rec)
+	if !ok || namoff+namlen > uint64(len(rec)) {
+		return consumed, nil, InvalidMode
+	}
+	namebuf := rec[namoff : namoff+namlen]
+	for i, c := range namebuf {
+		if c == 0 {
+			namebuf = namebuf[:i]
+			break
+		}
+	}
+	return consumed, namebuf, typ
 }

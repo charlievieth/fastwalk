@@ -43,6 +43,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
+	"unsafe"
 )
 
 // ErrTraverseLink is used as a return value from WalkDirFuncs to indicate that
@@ -411,6 +413,16 @@ type DirEntry interface {
 //
 //   - The [fs.SkipAll] sentinel error is not respected and not ignored. If the
 //     WalkDirFunc returns SkipAll then Walk will exit with the error SkipAll.
+//
+//   - walkFn runs on the calling goroutine as well as on the workers Walk
+//     starts, so a panic from walkFn may surface on either.
+//
+//   - Paths and [DirEntry] values are allocated in blocks rather than one at a
+//     time. Retaining a path or a DirEntry that walkFn was passed therefore
+//     keeps a small fixed amount of memory (on the order of a kilobyte) alive
+//     alongside it. Callers that keep a small subset of a large walk and care
+//     about the difference should copy what they keep, e.g. with
+//     [strings.Clone].
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	fi, err := os.Stat(root)
 	if err != nil {
@@ -424,12 +436,6 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 		root = filepath.ToSlash(root)
 	}
 
-	// Make sure to wait for all workers to finish, otherwise
-	// walkFn could still be called after returning. This Wait call
-	// runs after close(e.donec) below.
-	var wg sync.WaitGroup
-	defer wg.Wait()
-
 	numWorkers := conf.NumWorkers
 	if numWorkers <= 0 {
 		numWorkers = DefaultNumWorkers()
@@ -437,108 +443,93 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 
 	w := &walker{
 		fn: walkFn,
-		// TODO: Increase the size of enqueuec so that we don't stall
-		// while processing a directory. Increasing the size of workc
-		// doesn't help as much (needs more testing).
-		enqueuec: make(chan walkItem, numWorkers), // buffered for performance
-		workc:    make(chan walkItem, numWorkers), // buffered for performance
-		donec:    make(chan struct{}),
-
-		// buffered for correctness & not leaking goroutines:
-		resc: make(chan error, numWorkers),
-
 		// TODO: we should just pass the Config
-		maxDepth: conf.MaxDepth,
-		follow:   conf.Follow,
-		toSlash:  conf.ToSlash,
-		sortMode: conf.Sort,
+		maxDepth:   conf.MaxDepth,
+		numWorkers: numWorkers,
+		follow:     conf.Follow,
+		toSlash:    conf.ToSlash,
+		sortMode:   conf.Sort,
 	}
+	w.cond.L = &w.mu
 	if w.follow {
 		w.ignoredDirs = append(w.ignoredDirs, fi)
 	}
 
-	defer close(w.donec)
-
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go w.doWork(&wg)
-	}
+	// Make sure to wait for all workers to finish, otherwise walkFn could
+	// still be called after returning. stop() is idempotent and is called
+	// here so that the workers exit if walkFn panics.
+	defer func() {
+		w.stop(nil)
+		w.wg.Wait()
+	}()
 
 	root = cleanRootPath(root)
-	// NOTE: in BenchmarkFastWalk the size of todo averages around
-	// 170 and can be in the ~250 range at max.
-	todo := []walkItem{{dir: root, info: fileInfoToDirEntry(filepath.Dir(root), fi)}}
-	out := 0
-	for {
-		workc := w.workc
-		var workItem walkItem
-		if len(todo) == 0 {
-			workc = nil
-		} else {
-			workItem = todo[len(todo)-1]
-		}
-		select {
-		case workc <- workItem:
-			todo = todo[:len(todo)-1]
-			out++
-		case it := <-w.enqueuec:
-			// TODO: consider appending to todo directly and using a
-			// mutext this might help with contention around select
-			todo = append(todo, it)
-		case err := <-w.resc:
-			out--
-			if err != nil {
-				return err
-			}
-			if out == 0 && len(todo) == 0 {
-				// It's safe to quit here, as long as the buffered
-				// enqueue channel isn't also readable, which might
-				// happen if the worker sends both another unit of
-				// work and its result before the other select was
-				// scheduled and both w.resc and w.enqueuec were
-				// readable.
-				select {
-				case it := <-w.enqueuec:
-					todo = append(todo, it)
-				default:
-					return nil
-				}
-			}
-		}
-	}
+
+	// The calling goroutine runs as the first worker; the rest are started
+	// on demand as work becomes available (see (*worker).publish). Walking a
+	// small tree never pays for goroutines it cannot use.
+	wk := worker{w: w}
+	w.pending.Store(1)
+	w.started = 1
+	wk.local = append(wk.local, walkItem{
+		dir:  root,
+		info: fileInfoToDirEntry(root, fi),
+	})
+	wk.run()
+
+	// All work is accounted for, but other workers may still be inside
+	// walkFn. Wait for them before reporting the result.
+	w.wg.Wait()
+	w.mu.Lock()
+	err = w.err
+	w.mu.Unlock()
+	return err
 }
 
-// doWork reads directories as instructed (via workc) and runs the
-// user's callback function.
-func (w *walker) doWork(wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		select {
-		case <-w.donec:
-			return
-		case it := <-w.workc:
-			select {
-			case <-w.donec:
-				return
-			case w.resc <- w.walk(it.dir, it.info, !it.callbackDone):
-			}
-		}
-	}
-}
-
+// A walker holds the state shared by all of a Walk's workers.
+//
+// Work is distributed with a shared LIFO stack guarded by mu. A worker keeps
+// one newly discovered directory to itself and publishes the rest, so it can
+// descend one level without synchronizing at all while everything else stays
+// available to whichever worker frees up first. Workers block on cond when
+// they run out of work and are woken by a publish or by the end of the walk.
 type walker struct {
 	fn fs.WalkDirFunc
 
-	donec    chan struct{} // closed on fastWalk's return
-	workc    chan walkItem // to workers
-	enqueuec chan walkItem // from workers
-	resc     chan error    // from workers
+	// pending counts the walkItems that have been created but not yet
+	// processed, wherever they currently live (shared stack, a worker's
+	// private stack, or in flight). The walk is complete when it hits zero.
+	pending atomic.Int64
+
+	mu      sync.Mutex
+	cond    sync.Cond
+	stack   []walkItem // shared work stack (LIFO)
+	idle    int        // workers blocked in cond.Wait
+	started int        // running workers
+	done    bool
+	err     error
+	wg      sync.WaitGroup
 
 	ignoredDirs []fs.FileInfo
 	maxDepth    int
+	numWorkers  int
 	follow      bool
 	toSlash     bool
 	sortMode    SortMode
+}
+
+// stop ends the walk, recording err as the result if it is the first error
+// seen. It is safe to call multiple times.
+func (w *walker) stop(err error) {
+	w.mu.Lock()
+	if w.err == nil {
+		w.err = err
+	}
+	if !w.done {
+		w.done = true
+		w.cond.Broadcast()
+	}
+	w.mu.Unlock()
 }
 
 type walkItem struct {
@@ -547,11 +538,119 @@ type walkItem struct {
 	callbackDone bool // callback already called; don't do it again
 }
 
-func (w *walker) enqueue(it walkItem) {
-	select {
-	case w.enqueuec <- it:
-	case <-w.donec:
+// A worker processes directories. Its private state (work stack, sort buffer,
+// and the arenas used to allocate paths and directory entries) is owned by a
+// single goroutine and needs no synchronization.
+type worker struct {
+	w     *walker
+	local []walkItem // private work stack (LIFO)
+
+	// Directory entries are allocated from arenas rather than one at a time.
+	// This trades a bounded amount of retained memory (a DirEntry that the
+	// user holds on to pins its whole chunk) for far fewer allocations.
+	buf   direntArena // sort buffer and entry chunk (platform specific)
+	arena []byte      // chunk that path strings are carved out of
+}
+
+func (wk *worker) run() {
+	w := wk.w
+	for {
+		it, ok := wk.next()
+		if !ok {
+			return
+		}
+		if err := wk.walk(it.dir, it.info, !it.callbackDone); err != nil {
+			w.stop(err)
+			return
+		}
+		// Hand off work before retiring this item so that pending cannot
+		// reach zero while another worker still has something to do.
+		wk.publish()
+		if w.pending.Add(-1) == 0 {
+			w.stop(nil)
+			return
+		}
 	}
+}
+
+// next returns the next directory to process, blocking until one is available.
+// It reports false once the walk has finished or been stopped.
+func (wk *worker) next() (walkItem, bool) {
+	if n := len(wk.local); n > 0 {
+		it := wk.local[n-1]
+		wk.local[n-1] = walkItem{}
+		wk.local = wk.local[:n-1]
+		return it, true
+	}
+	w := wk.w
+	w.mu.Lock()
+	for {
+		if w.done {
+			w.mu.Unlock()
+			return walkItem{}, false
+		}
+		if n := len(w.stack); n > 0 {
+			it := w.stack[n-1]
+			w.stack[n-1] = walkItem{}
+			w.stack = w.stack[:n-1]
+			w.mu.Unlock()
+			return it, true
+		}
+		w.idle++
+		w.cond.Wait()
+		w.idle--
+	}
+}
+
+// enqueue adds a directory to this worker's private stack.
+func (wk *worker) enqueue(it walkItem) {
+	// Count the child before its parent is retired so that pending never
+	// dips to zero while the walk is still live.
+	wk.w.pending.Add(1)
+	wk.local = append(wk.local, it)
+}
+
+// publish hands all but one of this worker's pending directories to the shared
+// stack and starts new workers up to the configured limit.
+//
+// Holding a single item back is what makes the private stack worth having: the
+// worker descends into it without going through the lock at all. Holding more
+// than one is measurably worse. It turns the walk into an independent
+// depth-first search per worker, which spreads the workers across distant
+// branches of the tree; opendir(3) then costs ~12% more, presumably because
+// path resolution no longer benefits from other workers having just walked the
+// same parent directories.
+func (wk *worker) publish() {
+	n := len(wk.local)
+	if n < 2 {
+		return
+	}
+	k := n - 1 // hand off everything but the deepest entry
+	w := wk.w
+	w.mu.Lock()
+	if w.done {
+		w.mu.Unlock()
+		return
+	}
+	w.stack = append(w.stack, wk.local[:k]...)
+	// Idle workers take the first k items; start new ones for the rest.
+	for i := w.idle; i < k && w.started < w.numWorkers; i++ {
+		w.started++
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			wk := worker{w: w}
+			wk.run()
+		}()
+	}
+	for i := 0; i < k && i < w.idle; i++ {
+		w.cond.Signal()
+	}
+	w.mu.Unlock()
+
+	wk.local[0] = wk.local[k]
+	clear(wk.local[1:n]) // drop the references left in the tail
+	wk.local = wk.local[:1]
 }
 
 func (w *walker) shouldSkipDir(fi fs.FileInfo) bool {
@@ -590,29 +689,59 @@ func (w *walker) shouldTraverse(path string, de DirEntry) bool {
 	}
 }
 
-func (w *walker) joinPaths(dir, base string) string {
-	// Handle the case where the root path argument to Walk is "/"
-	// without this the returned path is prefixed with "//".
-	if os.PathSeparator == '/' {
-		if len(dir) != 0 && dir[len(dir)-1] == '/' {
-			return dir + base
-		}
-		return dir + "/" + base
+// arenaChunkSize is the size of the byte slices that paths are carved
+// strings out of; paths longer than this get a dedicated allocation. It is
+// deliberately small: a path the caller retains keeps its whole chunk alive,
+// and measurement shows nothing to gain from larger chunks.
+const arenaChunkSize = 1024
+
+// joinPathBytes is joinPaths for a base name that is still in a raw directory
+// buffer. It returns the full path along with the base name as a substring of
+// it, so neither costs an allocation of its own.
+func (wk *worker) joinPathBytes(dir string, base []byte) (path, name string) {
+	sep := byte(os.PathSeparator)
+	if os.PathSeparator != '/' && wk.w.toSlash {
+		sep = '/'
 	}
 	if len(dir) != 0 && os.IsPathSeparator(dir[len(dir)-1]) {
-		return dir + base
+		sep = 0
 	}
-	if w.toSlash {
-		return dir + "/" + base
+	n := len(dir) + len(base)
+	if sep != 0 {
+		n++
 	}
-	return dir + string(os.PathSeparator) + base
+	buf := wk.reserve(n)
+	i := copy(buf, dir)
+	if sep != 0 {
+		buf[i] = sep
+		i++
+	}
+	copy(buf[i:], base)
+	path = unsafe.String(&buf[0], n)
+	return path, path[len(path)-len(base):]
 }
 
-func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
-	joined := w.joinPaths(dirName, baseName)
+// reserve returns an n byte slice carved out of the worker's arena. The
+// returned bytes are never handed out again, so it is safe to build a string
+// on top of them.
+func (wk *worker) reserve(n int) []byte {
+	if n > len(wk.arena) {
+		size := arenaChunkSize
+		if n > size {
+			size = n
+		}
+		wk.arena = make([]byte, size)
+	}
+	buf := wk.arena[:n:n]
+	wk.arena = wk.arena[n:]
+	return buf
+}
+
+func (wk *worker) onDirEnt(joined string, de DirEntry) error {
+	w := wk.w
 	typ := de.Type()
 	if typ == os.ModeDir {
-		w.enqueue(walkItem{dir: joined, info: de})
+		wk.enqueue(walkItem{dir: joined, info: de})
 		return nil
 	}
 
@@ -622,7 +751,7 @@ func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
 			if !w.follow {
 				// Set callbackDone so we don't call it twice for both the
 				// symlink-as-symlink and the symlink-as-directory later:
-				w.enqueue(walkItem{dir: joined, info: de, callbackDone: true})
+				wk.enqueue(walkItem{dir: joined, info: de, callbackDone: true})
 				return nil
 			}
 			err = nil // Ignore ErrTraverseLink when Follow is true.
@@ -633,13 +762,14 @@ func (w *walker) onDirEnt(dirName, baseName string, de DirEntry) error {
 		}
 		if err == nil && w.follow && w.shouldTraverse(joined, de) {
 			// Traverse symlink
-			w.enqueue(walkItem{dir: joined, info: de, callbackDone: true})
+			wk.enqueue(walkItem{dir: joined, info: de, callbackDone: true})
 		}
 	}
 	return err
 }
 
-func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
+func (wk *worker) walk(root string, info DirEntry, runUserCallback bool) error {
+	w := wk.w
 	if runUserCallback {
 		err := w.fn(root, info, nil)
 		if err == filepath.SkipDir {
@@ -654,7 +784,7 @@ func (w *walker) walk(root string, info DirEntry, runUserCallback bool) error {
 	if w.maxDepth > 0 && depth >= w.maxDepth {
 		return nil
 	}
-	err := w.readDir(root, depth+1)
+	err := wk.readDir(root, depth+1)
 	if err != nil {
 		// Second call, to report ReadDir error.
 		return w.fn(root, info, err)

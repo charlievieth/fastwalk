@@ -8,7 +8,8 @@ import (
 	"unsafe"
 )
 
-func (w *walker) readDir(dirName string, depth int) (err error) {
+func (wk *worker) readDir(dirName string, depth int) (err error) {
+	w := wk.w
 	var fd uintptr
 	for {
 		fd, err = opendir(dirName)
@@ -21,11 +22,10 @@ func (w *walker) readDir(dirName string, depth int) (err error) {
 	}
 	defer closedir(fd) //nolint:errcheck
 
-	var p *[]*unixDirent
-	if w.sortMode != SortNone {
-		p = direntSlicePool.Get().(*[]*unixDirent)
+	sorted := w.sortMode != SortNone
+	if sorted {
+		defer func() { clear(wk.buf.dents); wk.buf.dents = wk.buf.dents[:0] }()
 	}
-	defer putDirentSlice(p)
 
 	skipFiles := false
 	var dirent syscall.Dirent
@@ -67,31 +67,29 @@ func (w *walker) readDir(dirName string, depth int) (err error) {
 		if string(name) == "." || string(name) == ".." {
 			continue
 		}
-		nm := string(name)
-		de := newUnixDirent(dirName, nm, typ, depth)
-		if w.sortMode == SortNone {
-			if err := w.onDirEnt(dirName, nm, de); err != nil {
+		path, nm := wk.joinPathBytes(dirName, name)
+		de := wk.newDirent(path, nm, typ, depth)
+		if !sorted {
+			if err := wk.onDirEnt(path, de); err != nil {
 				if err != ErrSkipFiles {
 					return err
 				}
 				skipFiles = true
 			}
 		} else {
-			*p = append(*p, de)
+			wk.buf.dents = append(wk.buf.dents, de)
 		}
 	}
-	if w.sortMode == SortNone {
+	if !sorted {
 		return nil
 	}
 
-	dents := *p
-	sortDirents(w.sortMode, dents)
-	for _, d := range dents {
-		d := d
+	sortDirents(w.sortMode, wk.buf.dents)
+	for _, d := range wk.buf.dents {
 		if skipFiles && d.typ.IsRegular() {
 			continue
 		}
-		if err := w.onDirEnt(dirName, d.Name(), d); err != nil {
+		if err := wk.onDirEnt(d.path, d); err != nil {
 			if err != ErrSkipFiles {
 				return err
 			}

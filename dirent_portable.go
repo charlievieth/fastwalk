@@ -9,18 +9,22 @@ import (
 	"io/fs"
 	"os"
 	"sort"
-	"sync"
 
 	"github.com/charlievieth/fastwalk/internal/fmtdirent"
 )
 
 var _ DirEntry = (*portableDirent)(nil)
 
+// A direntArena holds the per-worker buffers used to build directory entries.
+type direntArena struct {
+	dents []DirEntry // sort buffer, reused across directories
+}
+
 type portableDirent struct {
 	fs.DirEntry
-	parent string
-	stat   *fileInfo
-	depth  uint32
+	path  string // full path of the entry; what Walk passes to walkFn
+	stat  *fileInfo
+	depth uint32
 }
 
 func (d *portableDirent) String() string {
@@ -37,40 +41,23 @@ func (d *portableDirent) Stat() (fs.FileInfo, error) {
 	}
 	stat := loadFileInfo(&d.stat)
 	stat.once.Do(func() {
-		stat.FileInfo, stat.err = os.Stat(d.parent + string(os.PathSeparator) + d.Name())
+		stat.FileInfo, stat.err = os.Stat(d.path)
 	})
 	return stat.FileInfo, stat.err
 }
 
-func newDirEntry(dirName string, info fs.DirEntry, depth int) DirEntry {
+func newDirEntry(path string, info fs.DirEntry, depth int) DirEntry {
 	return &portableDirent{
 		DirEntry: info,
-		parent:   dirName,
+		path:     path,
 		depth:    uint32(depth),
 	}
 }
 
-func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
-	return newDirEntry(dirname, fs.FileInfoToDirEntry(fi), 0)
-}
-
-var direntSlicePool = sync.Pool{
-	New: func() any {
-		a := make([]DirEntry, 0, 32)
-		return &a
-	},
-}
-
-func putDirentSlice(p *[]DirEntry) {
-	// max is half as many as Unix because twice the size
-	if p != nil && cap(*p) <= 16*1024 {
-		a := *p
-		for i := range a {
-			a[i] = nil
-		}
-		*p = a[:0]
-		direntSlicePool.Put(p)
-	}
+// fileInfoToDirEntry returns a DirEntry for the file at path, which is the
+// root of a walk and so may not end in fi.Name() (consider "." or "/").
+func fileInfoToDirEntry(path string, fi fs.FileInfo) DirEntry {
+	return newDirEntry(path, fs.FileInfoToDirEntry(fi), 0)
 }
 
 func sortDirents(mode SortMode, dents []DirEntry) {

@@ -6,18 +6,20 @@ import (
 	"io/fs"
 	"os"
 	"sort"
-	"sync"
 
 	"github.com/charlievieth/fastwalk/internal/fmtdirent"
 )
 
 type unixDirent struct {
-	parent string
-	name   string
-	typ    fs.FileMode
-	depth  uint32 // uint32 so that we can pack it next to typ
-	info   *fileInfo
-	stat   *fileInfo
+	// path is the full path of the entry and is what Walk passes to walkFn.
+	// name is the entry's base name and, except for the root of a walk, is a
+	// substring of path rather than a separate allocation.
+	path  string
+	name  string
+	typ   fs.FileMode
+	depth uint32 // uint32 so that we can pack it next to typ
+	info  *fileInfo
+	stat  *fileInfo
 }
 
 func (d *unixDirent) Name() string      { return d.name }
@@ -29,7 +31,7 @@ func (d *unixDirent) String() string    { return fmtdirent.FormatDirEntry(d) }
 func (d *unixDirent) Info() (fs.FileInfo, error) {
 	info := loadFileInfo(&d.info)
 	info.once.Do(func() {
-		info.FileInfo, info.err = os.Lstat(d.parent + "/" + d.name)
+		info.FileInfo, info.err = os.Lstat(d.path)
 	})
 	return info.FileInfo, info.err
 }
@@ -40,48 +42,61 @@ func (d *unixDirent) Stat() (fs.FileInfo, error) {
 	}
 	stat := loadFileInfo(&d.stat)
 	stat.once.Do(func() {
-		stat.FileInfo, stat.err = os.Stat(d.parent + "/" + d.name)
+		stat.FileInfo, stat.err = os.Stat(d.path)
 	})
 	return stat.FileInfo, stat.err
 }
 
 func newUnixDirent(parent, name string, typ fs.FileMode, depth int) *unixDirent {
+	path := parent + "/" + name
 	return &unixDirent{
-		parent: parent,
-		name:   name,
-		typ:    typ,
-		depth:  uint32(depth),
+		path:  path,
+		name:  path[len(path)-len(name):],
+		typ:   typ,
+		depth: uint32(depth),
 	}
 }
 
-func fileInfoToDirEntry(dirname string, fi fs.FileInfo) DirEntry {
+// A direntArena holds the per-worker buffers used to build directory entries.
+type direntArena struct {
+	dents []*unixDirent // sort buffer, reused across directories
+	ents  []unixDirent  // chunk that newDirent carves entries out of
+}
+
+// direntChunkSize is the number of unixDirents that newDirent allocates at a
+// time. Entries cut from the same chunk share it, so a DirEntry the user
+// retains pins its whole chunk.
+const direntChunkSize = 32
+
+// newDirent returns a directory entry for path, allocated from the worker's
+// arena. name must be a substring of path.
+func (wk *worker) newDirent(path, name string, typ fs.FileMode, depth int) *unixDirent {
+	if len(wk.buf.ents) == 0 {
+		wk.buf.ents = make([]unixDirent, direntChunkSize)
+	}
+	d := &wk.buf.ents[0]
+	wk.buf.ents = wk.buf.ents[1:]
+	*d = unixDirent{
+		path:  path,
+		name:  name,
+		typ:   typ,
+		depth: uint32(depth),
+	}
+	return d
+}
+
+// fileInfoToDirEntry returns a DirEntry for the file at path, which is the
+// root of a walk and so may not end in fi.Name() (consider "." or "/").
+func fileInfoToDirEntry(path string, fi fs.FileInfo) DirEntry {
 	info := &fileInfo{
 		FileInfo: fi,
 	}
 	info.once.Do(func() {})
 	return &unixDirent{
-		parent: dirname,
-		name:   fi.Name(),
-		typ:    fi.Mode().Type(),
-		info:   info,
-	}
-}
-
-var direntSlicePool = sync.Pool{
-	New: func() any {
-		a := make([]*unixDirent, 0, 32)
-		return &a
-	},
-}
-
-func putDirentSlice(p *[]*unixDirent) {
-	if p != nil && cap(*p) <= 32*1024 /* 256Kb */ {
-		a := *p
-		for i := range a {
-			a[i] = nil
-		}
-		*p = a[:0]
-		direntSlicePool.Put(p)
+		path: path,
+		name: fi.Name(),
+		typ:  fi.Mode().Type(),
+		info: info,
 	}
 }
 
