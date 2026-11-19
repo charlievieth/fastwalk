@@ -44,7 +44,6 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"unsafe"
 )
 
 // ErrTraverseLink is used as a return value from WalkDirFuncs to indicate that
@@ -417,12 +416,10 @@ type DirEntry interface {
 //   - walkFn runs on the calling goroutine as well as on the workers Walk
 //     starts, so a panic from walkFn may surface on either.
 //
-//   - Paths and [DirEntry] values are allocated in blocks rather than one at a
-//     time. Retaining a path or a DirEntry that walkFn was passed therefore
-//     keeps a small fixed amount of memory (on the order of a kilobyte) alive
-//     alongside it. Callers that keep a small subset of a large walk and care
-//     about the difference should copy what they keep, e.g. with
-//     [strings.Clone].
+//   - Paths and [DirEntry] values are allocated in chunks, so retaining one
+//     keeps its chunk (a few kilobytes) alive. Callers that retain a small
+//     fraction of a large walk should copy the path with [strings.Clone] and
+//     not retain the DirEntry.
 func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	fi, err := os.Stat(root)
 	if err != nil {
@@ -456,8 +453,8 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	}
 
 	// Make sure to wait for all workers to finish, otherwise walkFn could
-	// still be called after returning. stop() is idempotent and is called
-	// here so that the workers exit if walkFn panics.
+	// still be called after returning. stop is a no-op unless walkFn
+	// panicked.
 	defer func() {
 		w.stop(nil)
 		w.wg.Wait()
@@ -477,9 +474,6 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 	})
 	wk.run()
 
-	// All work is accounted for, but other workers may still be inside
-	// walkFn. Wait for them before reporting the result.
-	w.wg.Wait()
 	w.mu.Lock()
 	err = w.err
 	w.mu.Unlock()
@@ -488,11 +482,9 @@ func Walk(conf *Config, root string, walkFn fs.WalkDirFunc) error {
 
 // A walker holds the state shared by all of a Walk's workers.
 //
-// Work is distributed with a shared LIFO stack guarded by mu. A worker keeps
-// one newly discovered directory to itself and publishes the rest, so it can
-// descend one level without synchronizing at all while everything else stays
-// available to whichever worker frees up first. Workers block on cond when
-// they run out of work and are woken by a publish or by the end of the walk.
+// Work is distributed with a shared LIFO stack guarded by mu. Workers block
+// on cond when it is empty and are woken by a publish or by the end of the
+// walk.
 type walker struct {
 	fn fs.WalkDirFunc
 
@@ -503,10 +495,10 @@ type walker struct {
 
 	mu      sync.Mutex
 	cond    sync.Cond
-	stack   []walkItem // shared work stack (LIFO)
-	idle    int        // workers blocked in cond.Wait
-	started int        // running workers
-	done    bool
+	stack   []walkItem  // shared work stack (LIFO)
+	idle    int         // workers blocked in cond.Wait and not yet signaled
+	started int         // workers started, including the caller
+	done    atomic.Bool // set with mu held
 	err     error
 	wg      sync.WaitGroup
 
@@ -525,8 +517,9 @@ func (w *walker) stop(err error) {
 	if w.err == nil {
 		w.err = err
 	}
-	if !w.done {
-		w.done = true
+	if !w.done.Load() {
+		w.done.Store(true)
+		w.idle = 0
 		w.cond.Broadcast()
 	}
 	w.mu.Unlock()
@@ -538,18 +531,13 @@ type walkItem struct {
 	callbackDone bool // callback already called; don't do it again
 }
 
-// A worker processes directories. Its private state (work stack, sort buffer,
-// and the arenas used to allocate paths and directory entries) is owned by a
-// single goroutine and needs no synchronization.
+// A worker processes directories. Its fields are owned by a single goroutine
+// and need no synchronization.
 type worker struct {
 	w     *walker
-	local []walkItem // private work stack (LIFO)
-
-	// Directory entries are allocated from arenas rather than one at a time.
-	// This trades a bounded amount of retained memory (a DirEntry that the
-	// user holds on to pins its whole chunk) for far fewer allocations.
-	buf   direntArena // sort buffer and entry chunk (platform specific)
-	arena []byte      // chunk that path strings are carved out of
+	local []walkItem  // private work stack (LIFO)
+	dents direntArena // sort buffer and entry chunk (platform specific)
+	paths []byte      // chunk that paths are allocated from
 }
 
 func (wk *worker) run() {
@@ -563,8 +551,7 @@ func (wk *worker) run() {
 			w.stop(err)
 			return
 		}
-		// Hand off work before retiring this item so that pending cannot
-		// reach zero while another worker still has something to do.
+		// Publish first so idle workers can start on the children sooner.
 		wk.publish()
 		if w.pending.Add(-1) == 0 {
 			w.stop(nil)
@@ -576,16 +563,20 @@ func (wk *worker) run() {
 // next returns the next directory to process, blocking until one is available.
 // It reports false once the walk has finished or been stopped.
 func (wk *worker) next() (walkItem, bool) {
+	w := wk.w
+	// Check done first so that a stopped walk abandons its private work.
+	if w.done.Load() {
+		return walkItem{}, false
+	}
 	if n := len(wk.local); n > 0 {
 		it := wk.local[n-1]
 		wk.local[n-1] = walkItem{}
 		wk.local = wk.local[:n-1]
 		return it, true
 	}
-	w := wk.w
 	w.mu.Lock()
 	for {
-		if w.done {
+		if w.done.Load() {
 			w.mu.Unlock()
 			return walkItem{}, false
 		}
@@ -596,9 +587,8 @@ func (wk *worker) next() (walkItem, bool) {
 			w.mu.Unlock()
 			return it, true
 		}
-		w.idle++
+		w.idle++ // decremented by whoever wakes us
 		w.cond.Wait()
-		w.idle--
 	}
 }
 
@@ -610,41 +600,38 @@ func (wk *worker) enqueue(it walkItem) {
 	wk.local = append(wk.local, it)
 }
 
-// publish hands all but one of this worker's pending directories to the shared
-// stack and starts new workers up to the configured limit.
+// publish moves all but one of the worker's directories to the shared stack
+// and wakes or starts workers to take them.
 //
-// Holding a single item back is what makes the private stack worth having: the
-// worker descends into it without going through the lock at all. Holding more
-// than one is measurably worse. It turns the walk into an independent
-// depth-first search per worker, which spreads the workers across distant
-// branches of the tree; opendir(3) then costs ~12% more, presumably because
-// path resolution no longer benefits from other workers having just walked the
-// same parent directories.
+// The worker keeps one so it can descend without taking the lock. Keeping
+// more scatters workers across distant branches of the tree, which makes
+// opendir(3) measurably slower.
 func (wk *worker) publish() {
 	n := len(wk.local)
 	if n < 2 {
 		return
 	}
-	k := n - 1 // hand off everything but the deepest entry
+	k := n - 1 // keep the last entry
 	w := wk.w
 	w.mu.Lock()
-	if w.done {
+	if w.done.Load() {
 		w.mu.Unlock()
 		return
 	}
 	w.stack = append(w.stack, wk.local[:k]...)
-	// Idle workers take the first k items; start new ones for the rest.
-	for i := w.idle; i < k && w.started < w.numWorkers; i++ {
+	// Wake an idle worker for each item and start new workers for the rest.
+	wake := min(k, w.idle)
+	w.idle -= wake
+	for i := 0; i < wake; i++ {
+		w.cond.Signal()
+	}
+	for i := wake; i < k && w.started < w.numWorkers; i++ {
 		w.started++
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			wk := worker{w: w}
-			wk.run()
+			(&worker{w: w}).run()
 		}()
-	}
-	for i := 0; i < k && i < w.idle; i++ {
-		w.cond.Signal()
 	}
 	w.mu.Unlock()
 
@@ -689,51 +676,22 @@ func (w *walker) shouldTraverse(path string, de DirEntry) bool {
 	}
 }
 
-// arenaChunkSize is the size of the byte slices that paths are carved
-// strings out of; paths longer than this get a dedicated allocation. It is
-// deliberately small: a path the caller retains keeps its whole chunk alive,
-// and measurement shows nothing to gain from larger chunks.
+// arenaChunkSize is the size of the chunks that paths are allocated from;
+// longer paths get their own allocation. It is small because a retained path
+// pins its whole chunk.
 const arenaChunkSize = 1024
 
-// joinPathBytes is joinPaths for a base name that is still in a raw directory
-// buffer. It returns the full path along with the base name as a substring of
-// it, so neither costs an allocation of its own.
-func (wk *worker) joinPathBytes(dir string, base []byte) (path, name string) {
-	sep := byte(os.PathSeparator)
-	if os.PathSeparator != '/' && wk.w.toSlash {
-		sep = '/'
-	}
-	if len(dir) != 0 && os.IsPathSeparator(dir[len(dir)-1]) {
-		sep = 0
-	}
-	n := len(dir) + len(base)
-	if sep != 0 {
-		n++
-	}
-	buf := wk.reserve(n)
-	i := copy(buf, dir)
-	if sep != 0 {
-		buf[i] = sep
-		i++
-	}
-	copy(buf[i:], base)
-	path = unsafe.String(&buf[0], n)
-	return path, path[len(path)-len(base):]
-}
-
-// reserve returns an n byte slice carved out of the worker's arena. The
-// returned bytes are never handed out again, so it is safe to build a string
-// on top of them.
+// reserve returns n bytes from the worker's arena. The bytes are never handed
+// out again, so it is safe to build a string on top of them.
 func (wk *worker) reserve(n int) []byte {
-	if n > len(wk.arena) {
-		size := arenaChunkSize
-		if n > size {
-			size = n
-		}
-		wk.arena = make([]byte, size)
+	if n > arenaChunkSize {
+		return make([]byte, n)
 	}
-	buf := wk.arena[:n:n]
-	wk.arena = wk.arena[n:]
+	if n > len(wk.paths) {
+		wk.paths = make([]byte, arenaChunkSize)
+	}
+	buf := wk.paths[:n:n]
+	wk.paths = wk.paths[n:]
 	return buf
 }
 

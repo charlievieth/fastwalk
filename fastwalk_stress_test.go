@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/charlievieth/fastwalk"
 )
@@ -18,6 +20,7 @@ import (
 // buildTree makes a tree with an awkward shape: a long fanout-1 chain (which
 // starves the work queue), a very wide directory, and a deep balanced part.
 func buildTree(t testing.TB) (root string, want []string) {
+	t.Helper()
 	root = t.TempDir()
 	mk := func(p string) {
 		if err := os.MkdirAll(p, 0755); err != nil {
@@ -128,7 +131,7 @@ func TestWalkStressDepth(t *testing.T) {
 				}
 				want := 0
 				if rel != "." {
-					want = len(filepath.SplitList(rel)) + strings_Count(rel, string(os.PathSeparator))
+					want = strings.Count(rel, string(os.PathSeparator)) + 1
 				}
 				if got := fastwalk.DirEntryDepth(d); got != want {
 					t.Errorf("workers=%d %q: depth %d; want %d", workers, rel, got, want)
@@ -139,16 +142,6 @@ func TestWalkStressDepth(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-}
-
-func strings_Count(s, sub string) int {
-	n := 0
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			n++
-		}
-	}
-	return n
 }
 
 // An error from walkFn must stop the walk and be returned, with no callbacks
@@ -191,7 +184,55 @@ func TestWalkStressError(t *testing.T) {
 	}
 }
 
-// Walking many small trees concurrently should not leak goroutines.
+// An error must also stop workers that still hold directories of their own:
+// one worker fails while the other is partway down a chain of directories,
+// which it never has to return to the shared stack for.
+func TestWalkStopsPrivateWork(t *testing.T) {
+	const chainLen = 50
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "fail"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	chain := filepath.Join(root, "chain")
+	head := filepath.Join(chain, "c")
+	if err := os.MkdirAll(chain+strings.Repeat("/c", chainLen), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	errBoom := errors.New("boom")
+	entered := make(chan struct{}) // closed when a worker is on the chain
+	failed := make(chan struct{})  // closed when the other worker fails
+	var after atomic.Int64
+	err := fastwalk.Walk(&fastwalk.Config{NumWorkers: 2}, root,
+		func(p string, _ fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			switch {
+			case p == filepath.Join(root, "fail"):
+				<-entered
+				close(failed)
+				return errBoom
+			case p == head:
+				close(entered)
+				<-failed
+				// Give the failed worker time to stop the walk.
+				time.Sleep(10 * time.Millisecond)
+			case strings.HasPrefix(p, head):
+				after.Add(1)
+				time.Sleep(time.Millisecond)
+			}
+			return nil
+		})
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("err = %v; want %v", err, errBoom)
+	}
+	if n := after.Load(); n > 2 {
+		t.Errorf("visited %d of %d directories after the walk was stopped", n, chainLen-1)
+	}
+}
+
+// Concurrent walks must not leak goroutines.
 func TestWalkStressGoroutineLeak(t *testing.T) {
 	root, _ := buildTree(t)
 	base := runtime.NumGoroutine()

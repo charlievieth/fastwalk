@@ -25,7 +25,7 @@ func (wk *worker) readDir(dirName string, depth int) error {
 
 	sorted := w.sortMode != SortNone
 	if sorted {
-		defer func() { clear(wk.buf.dents); wk.buf.dents = wk.buf.dents[:0] }()
+		defer func() { clear(wk.dents.sortbuf); wk.dents.sortbuf = wk.dents.sortbuf[:0] }()
 	}
 
 	var skipFiles bool
@@ -34,24 +34,25 @@ func (wk *worker) readDir(dirName string, depth int) error {
 			continue
 		}
 		// Need to use FileMode.Type().Type() for fs.DirEntry
-		e := newDirEntry(wk.joinPaths(dirName, d.Name()), d, depth)
+		path := wk.joinPaths(dirName, d.Name())
+		e := newDirEntry(path, d, depth)
 		if !sorted {
-			if err := wk.onDirEnt(e.(*portableDirent).path, e); err != nil {
+			if err := wk.onDirEnt(path, e); err != nil {
 				if err != ErrSkipFiles {
 					return err
 				}
 				skipFiles = true
 			}
 		} else {
-			wk.buf.dents = append(wk.buf.dents, e)
+			wk.dents.sortbuf = append(wk.dents.sortbuf, e)
 		}
 	}
 	if !sorted {
 		return readErr
 	}
 
-	sortDirents(w.sortMode, wk.buf.dents)
-	for _, d := range wk.buf.dents {
+	sortDirents(w.sortMode, wk.dents.sortbuf)
+	for _, d := range wk.dents.sortbuf {
 		if skipFiles && d.Type().IsRegular() {
 			continue
 		}
@@ -65,9 +66,7 @@ func (wk *worker) readDir(dirName string, depth int) error {
 	return readErr
 }
 
-// joinPaths joins dir and base into a path allocated from the worker's arena.
-// Paths cut from the same chunk share it, so one allocation serves many
-// entries; the cost is that a path the user retains pins its whole chunk.
+// joinPaths returns dir joined with base, allocated from the worker's arena.
 func (wk *worker) joinPaths(dir, base string) string {
 	sep := byte(os.PathSeparator)
 	if os.PathSeparator != '/' && wk.w.toSlash {

@@ -24,7 +24,7 @@ func (wk *worker) readDir(dirName string, depth int) (err error) {
 
 	sorted := w.sortMode != SortNone
 	if sorted {
-		defer func() { clear(wk.buf.dents); wk.buf.dents = wk.buf.dents[:0] }()
+		defer func() { clear(wk.dents.sortbuf); wk.dents.sortbuf = wk.dents.sortbuf[:0] }()
 	}
 
 	skipFiles := false
@@ -77,15 +77,15 @@ func (wk *worker) readDir(dirName string, depth int) (err error) {
 				skipFiles = true
 			}
 		} else {
-			wk.buf.dents = append(wk.buf.dents, de)
+			wk.dents.sortbuf = append(wk.dents.sortbuf, de)
 		}
 	}
 	if !sorted {
 		return nil
 	}
 
-	sortDirents(w.sortMode, wk.buf.dents)
-	for _, d := range wk.buf.dents {
+	sortDirents(w.sortMode, wk.dents.sortbuf)
+	for _, d := range wk.dents.sortbuf {
 		if skipFiles && d.typ.IsRegular() {
 			continue
 		}

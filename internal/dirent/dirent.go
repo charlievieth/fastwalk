@@ -49,11 +49,9 @@ func Parse(buf []byte) (consumed int, name string, typ os.FileMode) {
 	return consumed, name, typ
 }
 
-// ParseBytes is Parse but returns the entry's name as a sub-slice of buf,
-// which lets callers that immediately copy the name avoid allocating a string
-// for entries they end up discarding.
+// ParseBytes is like Parse but returns name as a subslice of buf, which is
+// only valid until buf is next written.
 func ParseBytes(buf []byte) (consumed int, name []byte, typ os.FileMode) {
-
 	reclen, ok := direntReclen(buf)
 	if !ok || reclen > uint64(len(buf)) {
 		// WARN: this is a hard error because we consumed 0 bytes

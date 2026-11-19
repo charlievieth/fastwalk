@@ -16,6 +16,16 @@ import (
 	"unsafe"
 )
 
+func newUnixDirent(parent, name string, typ fs.FileMode, depth int) *unixDirent {
+	path := parent + "/" + name
+	return &unixDirent{
+		path:  path,
+		name:  path[len(path)-len(name):],
+		typ:   typ,
+		depth: uint32(depth),
+	}
+}
+
 func testUnixDirentParallel(t *testing.T, ent *unixDirent, want fs.FileInfo,
 	fn func(*unixDirent) (fs.FileInfo, error)) {
 

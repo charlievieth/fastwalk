@@ -17,7 +17,7 @@ var _ DirEntry = (*portableDirent)(nil)
 
 // A direntArena holds the per-worker buffers used to build directory entries.
 type direntArena struct {
-	dents []DirEntry // sort buffer, reused across directories
+	sortbuf []DirEntry // sort buffer, reused across directories
 }
 
 type portableDirent struct {

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"sort"
+	"unsafe"
 
 	"github.com/charlievieth/fastwalk/internal/fmtdirent"
 )
@@ -47,20 +48,10 @@ func (d *unixDirent) Stat() (fs.FileInfo, error) {
 	return stat.FileInfo, stat.err
 }
 
-func newUnixDirent(parent, name string, typ fs.FileMode, depth int) *unixDirent {
-	path := parent + "/" + name
-	return &unixDirent{
-		path:  path,
-		name:  path[len(path)-len(name):],
-		typ:   typ,
-		depth: uint32(depth),
-	}
-}
-
 // A direntArena holds the per-worker buffers used to build directory entries.
 type direntArena struct {
-	dents []*unixDirent // sort buffer, reused across directories
-	ents  []unixDirent  // chunk that newDirent carves entries out of
+	sortbuf []*unixDirent // sort buffer, reused across directories
+	chunk   []unixDirent  // chunk that newDirent allocates entries from
 }
 
 // direntChunkSize is the number of unixDirents that newDirent allocates at a
@@ -71,11 +62,11 @@ const direntChunkSize = 32
 // newDirent returns a directory entry for path, allocated from the worker's
 // arena. name must be a substring of path.
 func (wk *worker) newDirent(path, name string, typ fs.FileMode, depth int) *unixDirent {
-	if len(wk.buf.ents) == 0 {
-		wk.buf.ents = make([]unixDirent, direntChunkSize)
+	if len(wk.dents.chunk) == 0 {
+		wk.dents.chunk = make([]unixDirent, direntChunkSize)
 	}
-	d := &wk.buf.ents[0]
-	wk.buf.ents = wk.buf.ents[1:]
+	d := &wk.dents.chunk[0]
+	wk.dents.chunk = wk.dents.chunk[1:]
 	*d = unixDirent{
 		path:  path,
 		name:  name,
@@ -83,6 +74,26 @@ func (wk *worker) newDirent(path, name string, typ fs.FileMode, depth int) *unix
 		depth: uint32(depth),
 	}
 	return d
+}
+
+// joinPathBytes returns dir joined with base, and base as a substring of the
+// result. The path is allocated from the worker's arena.
+func (wk *worker) joinPathBytes(dir string, base []byte) (path, name string) {
+	n := len(dir) + len(base)
+	// Don't add a second slash when the root of the walk is "/".
+	slash := len(dir) == 0 || dir[len(dir)-1] != '/'
+	if slash {
+		n++
+	}
+	buf := wk.reserve(n)
+	i := copy(buf, dir)
+	if slash {
+		buf[i] = '/'
+		i++
+	}
+	copy(buf[i:], base)
+	path = unsafe.String(&buf[0], n)
+	return path, path[i:]
 }
 
 // fileInfoToDirEntry returns a DirEntry for the file at path, which is the
